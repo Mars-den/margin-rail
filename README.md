@@ -36,6 +36,9 @@ highlighted bar shows where you are.
   preview and how far down the note the heading is.
 - **Click** to jump to that heading.
 - **Drag** up or down along the rail to scroll through the note.
+- **Scroll or swipe over the rail** to browse headings when the outline is taller than the pane.
+- **Keyboard**: Tab to the rail, use Up/Down or Home/End to select any heading,
+  including nested headings, then Enter to jump. Escape dismisses the label.
 - **Bookmark** a heading with the button on its label. Click it again to remove
   the bookmark. Saved headings have a dot beside their bar.
 
@@ -69,8 +72,9 @@ Choose a rule under **Scroll tracking** and try it with the preview’s scroll s
 | **Equal shares** | Every heading stays current for the same amount of scrolling. |
 | **No tracking** | Use the rail to navigate without highlighting a current heading. |
 
-**By section length** is the default. It counts lines of Markdown, including
-separate shares for nested headings, so resizing the window doesn’t change it.
+**Follow the note** is the default for new installations. Existing saved choices
+are preserved. **By section length** counts lines of Markdown, including separate
+shares for nested headings, so resizing the window doesn’t change its allocation.
 
 **Finish on the last heading** highlights the final heading when you reach the
 bottom of a scrollable note. It works with any rule, including **No tracking**
@@ -112,7 +116,9 @@ these features.
 <summary>For developers</summary>
 
 Plain JavaScript and CSS; no build step. Run `node scripts/verify.cjs` for all
-checks. To release, commit on the branch tracking `origin/main`, then run
+checks. Optional browser layout and interaction checks use Playwright with an
+installed Chromium: `node tests/browser/navigation.cjs`. Set `PLAYWRIGHT_MODULE`
+to its module path if it is not installed locally. To release, commit on the branch tracking `origin/main`, then run
 `node scripts/release.cjs <next-version>`. GitHub Actions checks, attests, and
 publishes the plugin files.
 

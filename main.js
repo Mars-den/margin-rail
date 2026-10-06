@@ -70,7 +70,7 @@ const DEFAULTS = {
   // Current section
   activeMode: "single", // "single" | "visible"
   activeBoost: 4,
-  trackingMode: "length", // position | length | equal | off
+  trackingMode: "position", // position | length | equal | off
   lastAtBottom: true,
   activeOpacity: 1,
   passedOpacity: 0.4,
@@ -114,7 +114,7 @@ const SESSION_DEFAULTS = {
 const PRESET_KEYS = Object.keys(DEFAULTS);
 
 const BUILTIN_PRESETS = [
-  { id: "default", name: "v1", description: "Default: slim neutral ticks, a focused wave, section-length tracking, and full labels with bookmarks.", values: DEFAULTS },
+  { id: "default", name: "v1", description: "Default: slim neutral ticks, a focused wave, note-following tracking, and full labels with bookmarks.", values: DEFAULTS },
   { id: "builtin-quiet", name: "Quiet", description: "A minimal rail that follows the note, with a gentle hover and title-only labels.", values: {
     ...DEFAULTS, hoverStyle: "none", activeBoost: 0, tickGap: 6,
     trackingMode: "position", idleOpacity: 0.18, passedOpacity: 0.25,
@@ -254,6 +254,8 @@ function bookmarksCore(app) {
 
 /* ========================================================== shared rail === */
 
+let nextRailId = 0;
+
 class RailView {
   constructor(plugin, hostEl) {
     this.plugin = plugin;
@@ -274,10 +276,35 @@ class RailView {
     this.flyoutIndex = -1;
     this.bookmarkBusy = false;
     this.overFlyout = false;
+    this.keyboardFocused = false;
+    this.keyboardIndex = -1;
+    this.railId = `margin-rail-${++nextRailId}`;
 
     this.ownsHostClass = !hostEl.classList.contains("margin-rail-host");
     hostEl.classList.add("margin-rail-host");
     this.el = hostEl.createDiv({ cls: "scrollspy-rail" });
+    this.el.tabIndex = 0;
+    this.el.setAttribute("role", "listbox");
+    this.el.setAttribute("aria-label", "Note headings");
+    this.el.setAttribute("aria-orientation", "vertical");
+    this.el.setAttribute("aria-description", "Arrow keys select a heading, Home and End select the first and last. Enter jumps. Escape dismisses. Scroll to browse long outlines.");
+    this.el.addEventListener("focus", () => {
+      this.keyboardFocused = true;
+      this.selectKeyboard(Math.max(0, this.activeIndex));
+    });
+    this.el.addEventListener("blur", (event) => {
+      if (!this.flyout.contains(event.relatedTarget)) this.dismissKeyboard();
+    });
+    this.el.addEventListener("keydown", event => this.onKeyDown(event));
+    this.el.addEventListener("wheel", event => {
+      if (this.dense) event.stopPropagation();
+      if (this.drag) event.preventDefault();
+    }, { passive: false });
+    this.el.addEventListener("scroll", () => {
+      this.centers = [];
+      if (this.keyboardFocused && this.keyboardIndex >= 0) this.showFlyout(this.keyboardIndex);
+      else { this.setHovered(-1); this.hideFlyout(); }
+    });
 
     // The label lives outside the rail so the rail never needs a background of
     // its own -- the hover chrome belongs to the label, not to the bars.
@@ -303,7 +330,17 @@ class RailView {
     this.flyout.addEventListener("pointerleave", () => { this.overFlyout = false; this.scheduleLeave(); });
     this.flyout.addEventListener("focusin", () => this.cancelLeave());
     this.flyout.addEventListener("focusout", (evt) => {
-      if (!this.flyout.contains(evt.relatedTarget)) this.scheduleLeave();
+      if (!this.flyout.contains(evt.relatedTarget) && evt.relatedTarget !== this.el) {
+        this.dismissKeyboard();
+        this.scheduleLeave();
+      }
+    });
+    this.flyout.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.el.focus();
+      this.dismissKeyboard();
     });
     this.flyoutPreview = this.flyout.createDiv({ cls: "scrollspy-flyout-preview" });
 
@@ -374,7 +411,7 @@ class RailView {
   scheduleLeave() {
     this.cancelHoverFrame();
     this.cancelLeave();
-    if (this.overFlyout || this.flyout.contains(this.host.ownerDocument?.activeElement)) return;
+    if (this.keyboardFocused || this.overFlyout || this.flyout.contains(this.host.ownerDocument?.activeElement)) return;
     if (this.settings.showBookmarkButton && this.settings.showLabels) {
       // Leave time to cross the gap between a tick and its actionable label.
       this.leaveTimer = setTimeout(() => { this.leaveTimer = 0; this.onLeave(); }, 250);
@@ -410,17 +447,84 @@ class RailView {
     this.updateHierarchy();
   }
 
+  // A bounded scroll strip preserves target sizes instead of compressing hundreds
+  // of headings into a few pixels. Reserve horizontal room for expanded marks.
+  fitPane() {
+    if (!this.host) return;
+    const s = this.settings;
+    const height = this.host.clientHeight || this.host.getBoundingClientRect().height;
+    const travel = Math.max(0, height - 56);
+    const offset = s.anchor === "top" ? Math.max(0, Math.min(s.axisOffset, travel))
+      : s.anchor === "bottom" ? Math.max(-travel, Math.min(s.axisOffset, 0))
+      : Math.max(-travel / 2, Math.min(s.axisOffset, travel / 2));
+    const used = s.anchor === "middle" ? 2 * Math.abs(offset) : Math.abs(offset);
+    const available = Math.max(0, height - 32 - used);
+    const count = Array.from(this.el.children).filter(tick => !tick.hidden).length;
+    const swell = s.hoverStyle === "pill" ? Math.max(0, s.expandHeight - s.tickHeight) : 0;
+    const natural = 20 + swell + count * (s.tickHeight + 6) + Math.max(0, count - 1) * Math.max(0, s.tickGap - 6);
+    this.dense = natural > available;
+    this.el.toggleClass("is-dense", this.dense);
+    this.el.style.setProperty("--ss-pane-height", `${available}px`);
+    this.el.style.setProperty("--ss-axis-offset", `${offset}px`);
+    if (this.dense) {
+      this.el.style.translate = "";
+      this.el.style.removeProperty("--ss-reveal-shift");
+    }
+    this.centers = [];
+  }
+
+  selectKeyboard(index) {
+    if (!this.levels.length) return;
+    this.keyboardIndex = Math.max(0, Math.min(index, this.levels.length - 1));
+    this.updateHierarchy(); // All nested headings are available while focused.
+    const tick = this.el.children[this.keyboardIndex];
+    this.el.setAttribute("aria-activedescendant", tick.id);
+    Array.from(this.el.children).forEach((item, i) => item.setAttribute("aria-selected", String(i === this.keyboardIndex)));
+    // Scroll only the outline, never its note or workspace ancestors.
+    const box = tick.getBoundingClientRect(), rail = this.el.getBoundingClientRect();
+    if (box.top < rail.top + 10) this.el.scrollTop -= rail.top + 10 - box.top;
+    else if (box.bottom > rail.bottom - 10) this.el.scrollTop += box.bottom - rail.bottom + 10;
+    this.centers = [];
+    this.setHovered(this.keyboardIndex);
+    this.showFlyout(this.keyboardIndex);
+  }
+
+  dismissKeyboard() {
+    this.keyboardFocused = false;
+    this.keyboardIndex = -1;
+    this.el.removeAttribute("aria-activedescendant");
+    Array.from(this.el.children).forEach(tick => tick.setAttribute("aria-selected", "false"));
+    this.onLeave();
+  }
+
+  onKeyDown(event) {
+    const key = event.key;
+    if (!["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"].includes(key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (key === "Escape") { this.dismissKeyboard(); return; }
+    if (key === "Enter") {
+      if (this.keyboardIndex >= 0) this.activate(this.keyboardIndex);
+      return;
+    }
+    this.keyboardFocused = true;
+    const start = this.keyboardIndex >= 0 ? this.keyboardIndex : Math.max(0, this.activeIndex);
+    this.selectKeyboard(key === "Home" ? 0 : key === "End" ? this.levels.length - 1 : start + (key === "ArrowDown" ? 1 : -1));
+  }
+
   /* ------------------------------------------------------------- pointer -- */
 
-  // Bar centres only move when the rail is rebuilt or the host resizes, never
+  // Bar centres move on rebuild, outline scrolling, or resize, never
   // while a bar is growing. Measuring once on entry keeps the per-frame work to
   // arithmetic instead of a layout read per bar.
   measure() {
     const ticks = this.el.children;
+    const rail = this.dense ? this.el.getBoundingClientRect() : null;
     this.centers = [];
     for (let i = 0; i < ticks.length; i++) {
       const box = ticks[i].getBoundingClientRect();
-      this.centers.push(box.height ? box.top + box.height / 2 : null);
+      this.centers.push(box.height && (!rail || (box.top + box.height / 2 >= rail.top && box.top + box.height / 2 <= rail.bottom))
+        ? box.top + box.height / 2 : null);
     }
   }
 
@@ -467,7 +571,10 @@ class RailView {
 
   startDrag(evt) {
     if (!this.drag) this.suppressClick = false;
-    if (!this.settings.dragToScrub || evt.button !== 0 || this.drag) return;
+    // Let a finger browse a dense outline using native scrolling; mouse and
+    // pen drags still scrub the entire note across the bounded track.
+    if (!this.settings.dragToScrub || evt.button !== 0 || this.drag ||
+        (this.dense && evt.pointerType === "touch")) return;
     this.suppressClick = false;
     this.revealAt(evt.clientY);
     this.measure();
@@ -475,8 +582,8 @@ class RailView {
     if (!centers.length) return;
     const box = this.el.getBoundingClientRect();
     this.drag = { id: evt.pointerId, y: evt.clientY, moved: false, index: this.nearestIndex(evt.clientY),
-      start: centers.length > 1 ? centers[0] : box.top,
-      end: centers.length > 1 ? centers.at(-1) : box.bottom };
+      start: !this.dense && centers.length > 1 ? centers[0] : box.top,
+      end: !this.dense && centers.length > 1 ? centers.at(-1) : box.bottom };
     this.el.setPointerCapture(evt.pointerId);
     this.el.addClass("is-dragging");
     evt.preventDefault();
@@ -498,15 +605,16 @@ class RailView {
 
   updateHierarchy() {
     if (this.drag) return; // Keep the drag track stable as the current heading changes.
-    const visible = this.settings.hierarchyMode === "nearby"
+    const visible = !this.keyboardFocused && this.settings.hierarchyMode === "nearby"
       ? hierarchyVisible(this.levels, this.settings.idleLevels, this.activeIndex, this.expandedBranch)
       : this.levels.map(() => true);
     Array.from(this.el.children).forEach((tick, index) => tick.hidden = !visible[index]);
+    this.fitPane();
     this.centers = [];
   }
 
   revealAt(clientY) {
-    if (this.drag || this.settings.hierarchyMode !== "nearby") return;
+    if (this.drag || this.keyboardFocused || this.settings.hierarchyMode !== "nearby") return;
     const index = this.nearestIndex(clientY);
     if (index < 0) return;
     const root = headingBranches(this.levels, this.settings.idleLevels)[index];
@@ -517,7 +625,17 @@ class RailView {
     this.updateHierarchy();
     // Opening a branch must not move the pointed heading out from under the
     // pointer, especially with a middle or bottom anchor.
-    const shift = before - tick.getBoundingClientRect().top;
+    if (this.dense) {
+      // Keep the opened branch at the pointer without moving the bounded strip.
+      this.el.scrollTop += tick.getBoundingClientRect().top - before;
+      this.measure();
+      return;
+    }
+    let shift = before - tick.getBoundingClientRect().top;
+    if (this.host) {
+      const host = this.host.getBoundingClientRect(), rail = this.el.getBoundingClientRect();
+      shift = Math.max(host.top + 16 - rail.top, Math.min(shift, host.bottom - 16 - rail.bottom));
+    }
     const offset = Number.parseFloat(this.el.style.getPropertyValue("--ss-reveal-shift")) || 0;
     this.el.style.setProperty("--ss-reveal-shift", String(offset + shift));
     this.el.style.translate = `0 ${offset + shift}px`;
@@ -582,7 +700,7 @@ class RailView {
 
   showFlyout(index) {
     const settings = this.settings;
-    if (!settings.showLabels) return;
+    if (!settings.showLabels && !this.keyboardFocused) return;
 
     const label = this.labelFor(index);
     const tick = this.el.children[index];
@@ -603,8 +721,10 @@ class RailView {
     // side so it opens over the content rather than off the edge.
     const host = this.host.getBoundingClientRect();
     const box = tick.getBoundingClientRect();
-    this.flyout.style.top = `${box.top - host.top + box.height / 2}px`;
+    const center = box.top - host.top + box.height / 2;
     this.flyout.toggleClass("is-visible", true);
+    const half = this.flyout.getBoundingClientRect().height / 2;
+    this.flyout.style.top = `${Math.max(half, Math.min(host.height - half, center))}px`;
   }
 
   hideFlyout() {
@@ -666,8 +786,12 @@ class RailView {
     // level is H2 still starts flush rather than pre-indented.
     const topLevel = Math.min(6, ...levels);
 
-    levels.forEach((level) => {
+    levels.forEach((level, index) => {
       const tick = this.el.createDiv({ cls: "scrollspy-tick" });
+      tick.id = `${this.railId}-heading-${index}`;
+      tick.setAttribute("role", "option");
+      tick.setAttribute("aria-label", `Heading level ${level}: ${this.labelFor(index)?.title || `Heading ${index + 1}`}`);
+      tick.setAttribute("aria-selected", "false");
       tick.style.setProperty("--ss-depth", String(level - topLevel));
       tick.style.setProperty("--ss-boost", "0px");
 
@@ -677,6 +801,9 @@ class RailView {
       }
     });
     this.paintBookmarks();
+    this.updateHierarchy();
+    if (this.keyboardFocused) this.selectKeyboard(Math.max(0, this.keyboardIndex));
+    else this.el.removeAttribute("aria-activedescendant");
   }
 
   // active is a Set, because "everything on screen" can light several bars at
@@ -879,6 +1006,7 @@ class DocumentRail extends RailView {
   }
 
   syncWidth() {
+    this.fitPane();
     const hidden = !!this.visibilityReason();
     this.el.toggleClass("is-cramped", hidden);
     if (hidden) this.onLeave();
@@ -1077,6 +1205,7 @@ class PreviewRail extends RailView {
     const height = this.levels.length * (s.tickHeight + 6) +
       Math.max(0, this.levels.length - 1) * Math.max(0, s.tickGap - 6) + 20;
     this.host.style.height = `${Math.max(180, height + 64)}px`;
+    this.fitPane();
   }
 
   destroy() {

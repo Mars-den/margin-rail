@@ -76,7 +76,8 @@ function viewFixture(doc, name) {
   assert.equal(main.frames.size, 1); assert.equal(popout.frames.size, 1);
   main.flush(); popout.flush();
 
-  // Thousands of renderer sections should not be measured for default allocation tracking.
+  // Allocation tracking still avoids measuring renderer sections.
+  plugin.settings.trackingMode = "length";
   let measurements = 0, syncs = 0;
   one.currentMode.renderer.sections = Array.from({length: 5000}, (_, line) => ({ lineStart: line,
     lineEnd: line + 1, el: { getBoundingClientRect() { measurements++; return {top: 0, bottom: 10, height: 10}; } } }));
@@ -84,6 +85,8 @@ function viewFixture(doc, name) {
   for (let i = 0; i < 100; i++) a.onScroll();
   assert.equal(main.frames.size, 1); assert.equal(syncs, 0);
   main.flush(); assert.equal(syncs, 1); assert.equal(measurements, 0);
+  plugin.settings.trackingMode = 'position'; a.onScroll(); main.flush(); assert.equal(measurements, 5000);
+  measurements = 0; plugin.settings.trackingMode = 'length';
   plugin.settings.activeMode = 'visible'; a.onScroll(); main.flush(); assert.equal(measurements, 5000);
   plugin.settings.activeMode = 'single';
 
@@ -151,5 +154,5 @@ function viewFixture(doc, name) {
   assert.deepEqual(writes, [1,2]);
   const css = fs.readFileSync(path.join(__dirname,'../styles.css'),'utf8');
   assert.ok(css.includes('.workspace-leaf-content[data-type="markdown"].margin-rail-host'));
-  console.log('Performance checks passed: burst scroll batching, 5,000-section default path, incremental refresh, late indexing, popout styles, debounced saves, and unload cleanup.');
+  console.log('Performance checks passed: burst scroll batching, 5,000-section allocation and position paths, incremental refresh, late indexing, popout styles, debounced saves, and unload cleanup.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -26,10 +26,10 @@
      setting has to give that back to stay literal. */
   gap: max(0px, calc(var(--ss-tick-gap, 6px) - 6px));
 
-  /* Deliberately no overflow clipping: the hovered tick expands past the rail's
-     resting width, and any clipping here would cut the pill off mid-animation.
-     The cost is that a note with a very large number of headings makes a rail
-     taller than the pane -- raise the minimum heading count if that bites. */
+  /* Short outlines allow marks to expand freely. Dense outlines scroll with
+     room reserved for the widest mark; labels remain outside this container. */
+  max-height: var(--ss-pane-height, calc(100% - 32px));
+  box-sizing: border-box;
   overflow: visible;
 
   /* The rail is the hit target, not the bars. Padding widens it into a strip
@@ -69,12 +69,29 @@
   bottom: calc(16px - var(--ss-axis-offset, 0px));
 }
 
+.scrollspy-rail.is-dense {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  min-width: calc(2 * var(--ss-hitbox, 36px) + max(
+    var(--ss-expand-width, 30px),
+    calc(var(--ss-tick-width, 16px) + var(--ss-wave-boost, 30px) + max(var(--ss-active-boost, 4px), var(--ss-passed-boost, 0px)))
+  ));
+}
+.scrollspy-rail.is-dense::-webkit-scrollbar { display: none; }
+.scrollspy-rail.is-dense.can-scrub { touch-action: pan-y; }
+.scrollspy-rail.is-dense .scrollspy-tick { min-height: 24px; box-sizing: border-box; align-items: center; }
+.scrollspy-rail:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.scrollspy-tick[aria-selected="true"] .scrollspy-mark { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+
 /* ---------------------------------------------------------------- tick ---- */
 
 .scrollspy-tick {
   /* The rail handles the pointer; bars are purely visual. */
   pointer-events: none;
   display: flex;
+  flex-shrink: 0;
   padding-block: 3px;
 }
 
@@ -199,6 +216,8 @@
 .scrollspy-flyout.is-visible {
   opacity: 1;
   visibility: visible;
+  /* Make actions focusable immediately, even during a rapid keyboard Tab. */
+  transition-property: opacity;
 }
 
 .scrollspy-flyout .is-hidden {
@@ -441,7 +460,11 @@
 .scrollspy-rail.has-section-progress .scrollspy-tick.is-current .scrollspy-mark {
   /* Older Electron/WebKit engines do not support color-mix. */
   background-color: var(--background-modifier-hover);
-  background-color: color-mix(in srgb, var(--ss-active-color, var(--text-normal)) 22%, transparent);
+}
+@supports (background-color: color-mix(in srgb, black 22%, transparent)) {
+  .scrollspy-rail.has-section-progress .scrollspy-tick.is-current .scrollspy-mark {
+    background-color: color-mix(in srgb, var(--ss-active-color, var(--text-normal)) 22%, transparent);
+  }
 }
 .scrollspy-rail.has-section-progress .scrollspy-tick.is-current .scrollspy-mark::before {
   content: "";

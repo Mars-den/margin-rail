@@ -29,6 +29,7 @@ let landscape = false, hidden = false, closes = 0;
 rail.host = { ownerDocument: { defaultView: { matchMedia: () => ({ matches: landscape }) } } };
 rail.view = { containerEl: { clientWidth: 390 } }; rail.headings = Array(8);
 rail.el = { toggleClass(name, value) { hidden = value; } }; rail.onLeave = () => closes++;
+rail.fitPane = () => {}; // Layout is covered by navigation checks.
 rail.syncWidth(); assert.equal(hidden, true);
 landscape = true; rail.syncWidth(); assert.equal(hidden, false);
 landscape = false; rail.syncWidth(); assert.equal(hidden, true); assert.equal(closes, 2);
