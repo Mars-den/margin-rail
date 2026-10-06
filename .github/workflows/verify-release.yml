@@ -1,0 +1,26 @@
+name: Verify published release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to verify
+        required: true
+        default: '1.0.2'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.version }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$RELEASE_TAG" -R "$RELEASE_REPO" -D assets -p main.js -p manifest.json -p styles.css
+          for asset in main.js manifest.json styles.css; do
+            gh attestation verify "assets/$asset" -R "$RELEASE_REPO" --signer-workflow "$RELEASE_REPO/.github/workflows/release.yml"
+          done
