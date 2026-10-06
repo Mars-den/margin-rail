@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * Scrollspy Rail
+ * Margin
  *
  * One rail per open markdown pane. Headings come from Obsidian's metadata cache,
  * so the list is always complete even though both editors virtualise their DOM.
@@ -964,7 +964,7 @@ class DocumentRail extends RailView {
 /* ========================================================= preview rail === */
 
 const SAMPLE = [
-  { level: 1, title: "Scrollspy Rail", percent: 0 },
+  { level: 1, title: "Margin", percent: 0 },
   { level: 2, title: "What it does", percent: 8 },
   { level: 3, title: "Bars and levels", percent: 16 },
   { level: 3, title: "The swell", percent: 27 },
@@ -1576,12 +1576,12 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
         this.refresh();
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         const rail = this.rails.get(view);
-        if (!rail) { new Notice("Scrollspy Rail: open a Markdown note first."); return; }
+        if (!rail) { new Notice("Margin: open a Markdown note first."); return; }
         const count = rail.headings.length;
         const width = view.containerEl.clientWidth;
         const reason = rail.visibilityReason() ||
           (!rail.scroller ? "Waiting for the note’s scroll container." : "Rail ready.");
-        new Notice(`Scrollspy Rail: ${count} headings, ${width}px pane. ${reason}`, 10000);
+        new Notice(`Margin: ${count} headings, ${width}px pane. ${reason}`, 10000);
       },
     });
 

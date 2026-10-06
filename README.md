@@ -1,4 +1,4 @@
-# Scrollspy Rail
+# Margin
 
 A compact heading rail for long notes in Obsidian. See where you are, hover for a
 heading preview, and jump or drag to navigate without keeping a sidebar open.
@@ -19,12 +19,12 @@ release; Android and tablet testing is still welcome.
 Until this plugin is listed in Obsidian’s community directory:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the
-   [latest GitHub release](https://github.com/PZTHH/scrollspy-rail/releases/latest).
+   [latest GitHub release](https://github.com/PZTHH/margin/releases/latest).
 2. Create `.obsidian/plugins/scrollspy-rail/` inside your vault and put those three
    files in it.
-3. Restart Obsidian, enable community plugins, and enable **Scrollspy Rail**.
+3. Restart Obsidian, enable community plugins, and enable **Margin**.
 
-For phones, use **Settings → Scrollspy Rail → Placement → On phones**. The default
+For phones, use **Settings → Margin → Placement → On phones**. The default
 hides the rail on phones to keep the small screen clear. The settings preview is
 always available.
 
@@ -35,7 +35,7 @@ The bookmark button uses Obsidian’s enabled Bookmarks core plugin. Scroll mapp
 and bookmark integration use guarded internal APIs, which can change between
 Obsidian releases. If something breaks, please report the Obsidian version,
 device, reading/editing mode, and steps to reproduce in
-[GitHub Issues](https://github.com/PZTHH/scrollspy-rail/issues).
+[GitHub Issues](https://github.com/PZTHH/margin/issues).
 
 ## License
 
@@ -226,7 +226,7 @@ Enable **Quick bookmark button** in Labels to add or remove a heading in
 Obsidian’s Bookmarks from its hover label. Bookmarked headings show a dot beside
 their tick. The settings preview uses temporary sample bookmarks.
 
-If a note’s rail is missing after startup, run **Scrollspy Rail: Refresh rail and
+If a note’s rail is missing after startup, run **Margin: Refresh rail and
 show status** from the command palette. It refreshes the rail and reports the
 heading count, pane width, and any visibility condition preventing it from showing.
 The rail also refreshes when Obsidian finishes indexing notes after startup.

@@ -28,4 +28,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" main.js manifest.json styles.css --verify-tag --title "Scrollspy Rail $RELEASE_TAG" --generate-notes
+        run: gh release create "$RELEASE_TAG" main.js manifest.json styles.css --verify-tag --title "Margin $RELEASE_TAG" --generate-notes
