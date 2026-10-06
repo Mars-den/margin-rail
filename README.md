@@ -24,8 +24,9 @@ Install from **Settings → Community plugins → Browse** in Obsidian: search f
 
 For manual installation, download `main.js`, `manifest.json`, and `styles.css`
 from the [latest GitHub release](https://github.com/Mars-den/margin-rail/releases/latest),
-place them in `.obsidian/plugins/scrollspy-rail/` inside your vault, restart
-Obsidian, and enable **Margin Rail**.
+create a folder under your vault’s `.obsidian/plugins/` named after the `id`
+field in `manifest.json`, and put the three files inside it. Restart Obsidian
+and enable **Margin Rail**.
 
 For phones, use **Settings → Margin Rail → Placement → On phones**. The default
 hides the rail on phones to keep the small screen clear. The settings preview is
@@ -72,7 +73,11 @@ strip of heading shares. Scrubbing or switching rules keeps the simulated scroll
 position, so differences are easy to compare.
 
 Sliders carry a standing numeric readout with units. Appearance uses CSS custom
-properties; changes to behaviour refresh the preview and open document rails.
+properties; changes to behaviour update the preview and open document rails
+without rereading notes. Appearance variables are scoped to each rail and its label, including
+rails in popout windows. Slider changes appear immediately, while settings saves
+wait briefly for the input to settle. Disabling the plugin removes its elements
+and positioning class without leaving global appearance variables behind.
 Idle, current, pointer-nearby, and passed visibility can be adjusted separately.
 Current and passed headings can each add length to their resting bars.
 
@@ -148,7 +153,8 @@ The proportional guess survives only as a last resort, with its flaw noted in pl
 A heading near the end of a note can never reach the top of the viewport.
 The optional bottom override solves that for physical tracking. Allocation modes
 also make intermediate headings near the bottom reachable by assigning each its
-own scroll interval. Follow the note with the bottom override remains the default.
+own scroll interval. The default v1 preset uses section-length tracking with
+the bottom override.
 
 The plugin writes `--ss-boost` per bar on each animation frame; the CSS does the sum.
 Tick centres are measured once when the pointer enters the rail rather than per frame,
@@ -242,9 +248,11 @@ and tablets. The minimum heading count still applies everywhere.
 
 ## Verification
 
-Run `node --check main.js`, `node tests/tracking.cjs`, and `node tests/features.cjs`, `node tests/bookmarks.cjs`, `node tests/startup.cjs`, and `node tests/visibility.cjs`. The tracking checks cover
-allocation boundaries, every heading receiving a turn, end overrides with every
-rule, viewport highlighting, short notes, and document-scroller integration.
+Run `node scripts/verify.cjs` to check syntax, release metadata, and all tests.
+Tracking checks cover allocation boundaries, every heading receiving a turn,
+end overrides, viewport highlighting, short notes, and mode-specific scrolling.
+Performance checks cover burst scroll scheduling, long-note measurement work,
+incremental refresh, popout styling, delayed settings persistence, and cleanup.
 
 Feature checks also cover hierarchy relative to heading levels, opening without
 moving the pointed heading, hidden hit targets, section fill, drag cancellation,
@@ -265,9 +273,12 @@ number*, and it does so in reading mode and live preview alike. `applyScroll(lin
 is its inverse. Each mode uses its own scroll container, while the same tracking
 rules and navigation code work in both modes.
 
-Everything else is bookkeeping: one rail per markdown pane, rebuilt on
-`layout-change` (which also covers reading/editing switches) and on metadata changes
-for the file that pane is showing.
+There is one rail per Markdown pane. Workspace changes reconcile the existing
+rails and rebind scrolling when a pane switches mode. Only new files or changed
+metadata rebuild the heading content; finishing global indexing does not rebuild
+unchanged rails. Scroll events are coalesced into one update per animation frame,
+using the pane’s own window. Section measurements are skipped when the chosen
+tracking and highlighting rules do not need them.
 
 
 ## Making a release
@@ -275,7 +286,7 @@ for the file that pane is showing.
 After committing your changes on the branch tracking `origin/main`, run:
 
 ```sh
-node scripts/release.cjs 1.0.3
+node scripts/release.cjs 1.0.4
 ```
 
 The script checks the source, updates the manifest and compatibility map, commits,

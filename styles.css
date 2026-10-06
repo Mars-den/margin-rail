@@ -1,6 +1,6 @@
-/* Margin
+/* Margin Rail
  *
- * Every value worth changing is a CSS variable written onto body by the plugin's
+ * Every value worth changing is a CSS variable scoped to the rail and label by the plugin's
  * applyStyles(). Edit the settings tab, not this file.
  *
  * The rail itself never draws a background. Hover chrome belongs to the label,
@@ -9,7 +9,7 @@
 
 /* The rail is absolutely positioned inside the pane, so the pane needs to be a
    positioning context. Obsidian does not guarantee one. */
-.workspace-leaf-content[data-type="markdown"] {
+.workspace-leaf-content[data-type="markdown"].margin-rail-host {
   position: relative;
 }
 

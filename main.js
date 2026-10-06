@@ -21,7 +21,7 @@
  * PreviewRail binds it to a sample in the settings tab, which is why the preview
  * behaves exactly like the real thing rather than approximating it.
  *
- * Appearance is driven by CSS custom properties written onto body by applyStyles().
+ * Appearance is driven by CSS custom properties scoped to each rail and its label by applyStyles().
  * The settings tab also refreshes rail markup when behaviour changes.
  *
  * No build step. Edit this file directly and reload the plugin.
@@ -274,6 +274,8 @@ class RailView {
     this.bookmarkBusy = false;
     this.overFlyout = false;
 
+    this.ownsHostClass = !hostEl.classList.contains("margin-rail-host");
+    hostEl.classList.add("margin-rail-host");
     this.el = hostEl.createDiv({ cls: "scrollspy-rail" });
 
     // The label lives outside the rail so the rail never needs a background of
@@ -326,9 +328,11 @@ class RailView {
     this.el.addEventListener("lostpointercapture", (evt) => {
       if (this.drag) this.endDrag(evt, true);
     });
+    this.plugin.applyStyles(this);
   }
 
   destroy() {
+    if (this.ownsHostClass) this.host.classList.remove("margin-rail-host");
     this.cancelLeave();
     if (this.waveFrame) cancelAnimationFrame(this.waveFrame);
     if (this.drag && this.el.hasPointerCapture(this.drag.id)) this.el.releasePointerCapture(this.drag.id);
@@ -608,6 +612,35 @@ class RailView {
 
   /* --------------------------------------------------------------- build -- */
 
+  updatePresentation() {
+    const settings = this.settings;
+    this.el.toggleClass("is-left", settings.side === "left");
+    this.el.toggleClass("is-right", settings.side !== "left");
+    this.el.toggleClass("anchor-top", settings.anchor === "top");
+    this.el.toggleClass("anchor-middle", settings.anchor === "middle");
+    this.el.toggleClass("anchor-bottom", settings.anchor === "bottom");
+    this.flyout.toggleClass("is-left", settings.side === "left");
+    this.flyout.toggleClass("is-right", settings.side !== "left");
+
+    this.el.toggleClass("can-scrub", settings.dragToScrub);
+    this.el.toggleClass("has-section-progress", settings.showSectionProgress);
+    this.el.toggleClass("hover-wave", settings.hoverStyle === "wave");
+    this.el.toggleClass("hover-pill", settings.hoverStyle === "pill");
+  }
+
+  updateSettings() {
+    this.plugin.applyStyles(this);
+    // Only pill markup changes require replacing ticks; sliders reuse them.
+    if (this.markStyle !== `${this.settings.showLevel}|${this.settings.hoverStyle}`) {
+      this.render(this.levels);
+    } else {
+      this.updatePresentation();
+      this.centers = [];
+      this.onLeave();
+    }
+    this.activeKey = "";
+  }
+
   // levels is an array of heading levels, one per bar. Everything visual is
   // derived from it plus the settings.
   render(levels) {
@@ -622,18 +655,8 @@ class RailView {
     this.el.style.removeProperty("--ss-reveal-shift");
     this.hideFlyout();
 
-    this.el.toggleClass("is-left", settings.side === "left");
-    this.el.toggleClass("is-right", settings.side !== "left");
-    this.el.toggleClass("anchor-top", settings.anchor === "top");
-    this.el.toggleClass("anchor-middle", settings.anchor === "middle");
-    this.el.toggleClass("anchor-bottom", settings.anchor === "bottom");
-    this.flyout.toggleClass("is-left", settings.side === "left");
-    this.flyout.toggleClass("is-right", settings.side !== "left");
-
-    this.el.toggleClass("can-scrub", settings.dragToScrub);
-    this.el.toggleClass("has-section-progress", settings.showSectionProgress);
-    this.el.toggleClass("hover-wave", settings.hoverStyle === "wave");
-    this.el.toggleClass("hover-pill", settings.hoverStyle === "pill");
+    this.updatePresentation();
+    this.markStyle = `${settings.showLevel}|${settings.hoverStyle}`;
 
     // Indent relative to the shallowest heading present, so a note whose top
     // level is H2 still starts flush rather than pre-indented.
@@ -687,12 +710,13 @@ class DocumentRail extends RailView {
     this.bookmarksPlugin = null;
     this.onBookmarksChanged = () => { this.paintBookmarks(); this.updateBookmarkButton(); };
 
-    this.onScroll = () => this.syncActive();
+    this.scrollFrame = 0;
+    this.onScroll = () => this.scheduleActive();
 
     // Reevaluate both pane width and phone orientation when the pane resizes.
     this.resizeObserver = new ResizeObserver(() => {
       this.syncWidth();
-      this.syncActive();
+      this.scheduleActive();
     });
     this.resizeObserver.observe(view.containerEl);
   }
@@ -815,7 +839,25 @@ class DocumentRail extends RailView {
     }
   }
 
+  scheduleActive() {
+    if (this.scrollFrame) return;
+    const win = this.host.ownerDocument.defaultView;
+    this.scrollWindow = win;
+    this.scrollFrame = win.requestAnimationFrame(() => {
+      this.scrollFrame = 0;
+      this.scrollWindow = null;
+      this.syncActive();
+    });
+  }
+
+  cancelActiveFrame() {
+    if (this.scrollFrame) this.scrollWindow.cancelAnimationFrame(this.scrollFrame);
+    this.scrollFrame = 0;
+    this.scrollWindow = null;
+  }
+
   detachScroller() {
+    this.cancelActiveFrame();
     if (this.scroller) {
       this.scroller.removeEventListener("scroll", this.onScroll);
     }
@@ -839,15 +881,49 @@ class DocumentRail extends RailView {
     this.centers = [];
   }
 
-  rebuild() {
+  syncBookmarks() {
     const core = bookmarksCore(this.view.app);
     if (core !== this.bookmarksPlugin) {
       this.bookmarksPlugin?.off?.("changed", this.onBookmarksChanged);
       this.bookmarksPlugin = core;
       core?.on?.("changed", this.onBookmarksChanged);
+      this.paintBookmarks();
+      this.updateBookmarkButton();
     }
+  }
+
+  metadataKey() {
+    return JSON.stringify(this.view.file
+      ? this.view.app.metadataCache.getFileCache(this.view.file)?.headings || [] : []);
+  }
+
+  refresh(force = false, checkMetadata = false) {
+    this.syncBookmarks();
+    if (force || this.file !== this.view.file || this.filePath !== this.view.file?.path ||
+        (checkMetadata && this.cachedMetadataKey !== this.metadataKey())) {
+      this.rebuild();
+      return;
+    }
+    // Mode or renderer replacement needs rebinding, not a note read or new ticks.
+    this.attachScroller();
+    this.syncWidth();
+    this.scheduleActive();
+  }
+
+  updateSettings() {
+    super.updateSettings();
+    this.el.toggleClass("is-hidden", this.headings.length < this.settings.minHeadings);
+    this.syncWidth();
+    this.syncActive();
+  }
+
+  rebuild() {
+    this.syncBookmarks();
     const settings = this.settings;
     const file = this.view.file;
+    this.file = file;
+    this.filePath = file?.path;
+    this.cachedMetadataKey = this.metadataKey();
     const cache = file ? this.view.app.metadataCache.getFileCache(file) : null;
     this.headings = (cache && cache.headings) || [];
 
@@ -942,12 +1018,14 @@ class DocumentRail extends RailView {
   syncActive() {
     if (!this.headings.length) return;
 
-    const [first, last] = this.visibleRange();
+    const needsRange = this.settings.trackingMode === "position" || this.settings.activeMode === "visible";
+    const topLine = this.scrollTopLine();
+    const [first, last] = needsRange ? this.visibleRange() : [topLine, topLine];
 
     const el = this.scroller;
     const scrollRange = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
     const viewport = {
-      first, last, topLine: this.scrollTopLine(),
+      first, last, topLine,
       progress: scrollRange > 0 ? el.scrollTop / scrollRange : 0,
       scrollable: scrollRange > 2,
       atBottom: this.atBottom(),
@@ -1074,11 +1152,14 @@ class ScrollspySettingTab extends PluginSettingTab {
     }
   }
 
-  // Redraw the sample after any change. Sizes and colours ride CSS variables
-  // and update on their own; side, anchor and hover style need the markup back.
+  // Update the sample immediately; settings persistence is debounced separately.
   save(render) {
     this.plugin.saveSettings();
-    if (this.preview) this.preview.rebuild();
+    if (this.preview) {
+      this.preview.updateSettings();
+      this.preview.syncActive();
+      this.preview.fitScene();
+    }
     if (this.updateSimulation) this.updateSimulation();
     if (this.presetDrop) {
       if (this.plugin.settings.activePreset === "custom") this.presetDrop.addOption("custom", "Custom (unsaved)");
@@ -1558,8 +1639,9 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
     }
 
     this.refresh = this.refresh.bind(this);
-    this.addSettingTab(new ScrollspySettingTab(this.app, this));
-    this.applyStyles();
+    this.settingTab = new ScrollspySettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
+    this.applyStyles(); // Clear body variables left by an older hot-reloaded version.
 
     // layout-change covers pane splits, closes, and reading/editing mode switches.
     this.registerEvent(this.app.workspace.on("layout-change", this.refresh));
@@ -1568,12 +1650,12 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
 
     // A cold/mobile startup can finish indexing after layout is ready, without
     // emitting a per-file change for notes that were already cached on disk.
-    this.registerEvent(this.app.metadataCache.on("resolved", this.refresh));
+    this.registerEvent(this.app.metadataCache.on("resolved", () => this.refresh(false, true)));
 
     this.addCommand({
       id: "refresh-rail", name: "Refresh rail and show status",
       callback: () => {
-        this.refresh();
+        this.refresh(true);
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         const rail = this.rails.get(view);
         if (!rail) { new Notice("Margin Rail: open a Markdown note first."); return; }
@@ -1599,21 +1681,34 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
   }
 
   onunload() {
+    this.flushSettings();
+    this.settingTab?.hide();
     for (const rail of this.rails.values()) rail.destroy();
     this.rails.clear();
   }
 
   saveSettings() {
-    this.saveData(this.settings);
-    this.applyStyles();
-    this.refresh();
+    // Paint immediately; persist only once a slider has settled.
+    for (const rail of this.rails.values()) rail.updateSettings();
+    if (this.settingsTimer) clearTimeout(this.settingsTimer);
+    this.settingsTimer = setTimeout(() => this.flushSettings(), 250);
   }
 
-  // Appearance lives in CSS variables on body. Nothing here touches markup, so
-  // settings changes cost one style recalculation rather than a rebuild.
-  applyStyles() {
+  flushSettings() {
+    if (!this.settingsTimer) return this.settingsWrite;
+    clearTimeout(this.settingsTimer);
+    this.settingsTimer = 0;
+    const snapshot = JSON.parse(JSON.stringify(this.settings));
+    // Serialize writes so an older save cannot overwrite a newer snapshot.
+    this.settingsWrite = (this.settingsWrite || Promise.resolve())
+      .then(() => this.saveData(snapshot))
+      .catch(() => { new Notice("Margin Rail: could not save settings. Try changing the setting again."); });
+    return this.settingsWrite;
+  }
+
+  // Scope variables to owned elements, including preview rails and popouts.
+  applyStyles(rail) {
     const s = this.settings;
-    const style = document.body.style;
     const active =
       s.colorMode === "custom" ? s.customColor : COLOR_SOURCES[s.colorMode];
 
@@ -1640,12 +1735,19 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
       "--ss-active-color": active,
     };
 
-    for (const [name, value] of Object.entries(vars)) {
-      style.setProperty(name, value);
+    const doc = rail?.host.ownerDocument || (typeof document !== "undefined" ? document : null);
+    if (doc?.body && !(this.cleanedDocuments ||= new WeakSet()).has(doc)) {
+      // Migrate the old global scope without touching unrelated inline styles.
+      for (const name of Object.keys(vars)) doc.body.style.removeProperty(name);
+      this.cleanedDocuments.add(doc);
+    }
+    if (!rail) return;
+    for (const el of [rail.el, rail.flyout]) {
+      for (const [name, value] of Object.entries(vars)) el.style.setProperty(name, value);
     }
   }
 
-  refresh() {
+  refresh(force = false, checkMetadata = false) {
     const live = new Set();
 
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
@@ -1657,8 +1759,8 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
       if (!rail) {
         rail = new DocumentRail(this, view);
         this.rails.set(view, rail);
-      }
-      rail.rebuild();
+        rail.rebuild();
+      } else rail.refresh(force === true, checkMetadata);
     }
 
     for (const [view, rail] of this.rails) {
