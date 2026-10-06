@@ -18,13 +18,14 @@ heading preview, and jump or drag to navigate without keeping a sidebar open.
 Requires **Obsidian 1.14.4 or later**. Desktop and iPhone testing informed this
 release; Android and tablet testing is still welcome.
 
-Until this plugin is listed in Obsidian’s community directory:
+Install from **Settings → Community plugins → Browse** in Obsidian: search for
+**Margin Rail**, install it, and enable it. You can also open its
+[community listing](https://community.obsidian.md/plugins/scrollspy-rail).
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the
-   [latest GitHub release](https://github.com/Mars-den/margin-rail/releases/latest).
-2. Create `.obsidian/plugins/scrollspy-rail/` inside your vault and put those three
-   files in it.
-3. Restart Obsidian, enable community plugins, and enable **Margin Rail**.
+For manual installation, download `main.js`, `manifest.json`, and `styles.css`
+from the [latest GitHub release](https://github.com/Mars-den/margin-rail/releases/latest),
+place them in `.obsidian/plugins/scrollspy-rail/` inside your vault, restart
+Obsidian, and enable **Margin Rail**.
 
 For phones, use **Settings → Margin Rail → Placement → On phones**. The default
 hides the rail on phones to keep the small screen clear. The settings preview is
@@ -274,7 +275,7 @@ for the file that pane is showing.
 After committing your changes on the branch tracking `origin/main`, run:
 
 ```sh
-node scripts/release.cjs 1.0.2
+node scripts/release.cjs 1.0.3
 ```
 
 The script checks the source, updates the manifest and compatibility map, commits,
