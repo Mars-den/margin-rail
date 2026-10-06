@@ -3,7 +3,9 @@
 A compact heading rail for long notes in Obsidian. See where you are, hover for a
 heading preview, and jump or drag to navigate without keeping a sidebar open.
 
-![Heading label with percentage, preview, and bookmark button](images/heading-label.png)
+[![Margin showcase: scrolling, heading previews, and bookmarks](images/showcase.gif)](https://github.com/Mars-den/margin/releases/download/1.0.2/margin-showcase.mp4)
+
+[Watch the full showcase video](https://github.com/Mars-den/margin/releases/download/1.0.2/margin-showcase.mp4).
 
 - Track headings by their position, section length, or equal scroll shares.
 - Show section progress, passed headings, and nearby heading levels.
