@@ -1,0 +1,10 @@
+{
+  "id": "scrollspy-rail",
+  "name": "Scrollspy Rail",
+  "version": "1.0.0",
+  "minAppVersion": "1.14.4",
+  "description": "Navigate long notes with a compact heading rail, customizable scroll tracking, hover previews, and heading bookmarks.",
+  "isDesktopOnly": false,
+  "author": "PZTHH",
+  "authorUrl": "https://github.com/PZTHH"
+}
