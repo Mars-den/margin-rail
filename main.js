@@ -34,6 +34,7 @@ const {
   MarkdownView,
   Notice,
   setIcon,
+  getIcon,
   Platform,
 } = require("obsidian");
 
@@ -388,7 +389,10 @@ class RailView {
     const state = this.bookmarkState(this.flyoutIndex);
     const title = state.saved ? "Remove heading bookmark" : state.available
       ? "Bookmark this heading" : "Enable Obsidian’s Bookmarks core plugin to bookmark headings";
-    setIcon(this.flyoutBookmark, state.saved ? "bookmark-check" : "bookmark-plus");
+    // Older Obsidian icon sets have bookmark-minus but not bookmark-check.
+    const savedIcon = typeof getIcon === "function" && getIcon("bookmark-check")
+      ? "bookmark-check" : "bookmark-minus";
+    setIcon(this.flyoutBookmark, state.saved ? savedIcon : "bookmark-plus");
     // aria-label supplies Obsidian’s tooltip; title would add a second native one.
     this.flyoutBookmark.removeAttribute("title");
     this.flyoutBookmark.setAttribute("aria-label", title);

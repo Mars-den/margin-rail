@@ -15,8 +15,11 @@ heading preview, and jump or drag to navigate without keeping a sidebar open.
 
 ## Install
 
-Requires **Obsidian 1.14.4 or later**. Desktop and iPhone testing informed this
-release; Android and tablet testing is still welcome.
+Requires **Obsidian 1.2.7 or later**, the first public release with the Bookmarks
+core plugin used for heading bookmarks. The minimum is based on an API and
+source compatibility audit; hands-on testing includes 1.12.7 and 1.14.4 on
+desktop, plus iPhone testing. Android, tablet, and older-version testing is
+still welcome.
 
 Install from **Settings → Community plugins → Browse** in Obsidian: search for
 **Margin Rail**, install it, and enable it. You can also open its

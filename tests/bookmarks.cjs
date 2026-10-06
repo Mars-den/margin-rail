@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
 let pending = null;
-const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {}, setIcon() {} }),
+let hasBookmarkCheck = false;
+let paintedIcon;
+const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {}, setIcon(el, icon) { paintedIcon = icon; }, getIcon() { return hasBookmarkCheck ? {} : null; } }),
   module: { exports: {} }, cancelAnimationFrame() {}, setTimeout(fn) { pending = fn; return 1; }, clearTimeout() { pending = null; } };
 vm.createContext(context);
 vm.runInContext(source + '\nmodule.exports = {headingSubpath, findHeadingBookmark, bookmarksCore, DocumentRail, RailView};', context);
@@ -67,6 +69,15 @@ const { headingSubpath, findHeadingBookmark, bookmarksCore, DocumentRail, RailVi
   button.flyout = { toggleClass() {} };
   button.flyoutBookmark = { attrs: { title: 'old native tooltip' }, toggleClass() {},
     removeAttribute(name) { delete this.attrs[name]; }, setAttribute(name, value) { this.attrs[name] = value; } };
+  button.bookmarkState = () => ({ available: true, saved: true });
+  button.updateBookmarkButton();
+  assert.equal(paintedIcon, "bookmark-minus", "Older icon sets keep a visible remove-bookmark action");
+  hasBookmarkCheck = true;
+  button.updateBookmarkButton();
+  assert.equal(paintedIcon, "bookmark-check");
+  button.bookmarkState = () => ({ available: true, saved: false });
+  button.updateBookmarkButton();
+  assert.equal(paintedIcon, "bookmark-plus");
   button.bookmarkState = () => ({ available: true, saved: true });
   button.updateBookmarkButton();
   assert.equal(button.flyoutBookmark.disabled, false);

@@ -439,6 +439,8 @@
 .scrollspy-rail.is-dragging { cursor: grabbing; }
 .scrollspy-mark { position: relative; }
 .scrollspy-rail.has-section-progress .scrollspy-tick.is-current .scrollspy-mark {
+  /* Older Electron/WebKit engines do not support color-mix. */
+  background-color: var(--background-modifier-hover);
   background-color: color-mix(in srgb, var(--ss-active-color, var(--text-normal)) 22%, transparent);
 }
 .scrollspy-rail.has-section-progress .scrollspy-tick.is-current .scrollspy-mark::before {

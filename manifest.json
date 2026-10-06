@@ -1,8 +1,8 @@
 {
   "id": "scrollspy-rail",
   "name": "Margin Rail",
-  "version": "1.0.4",
-  "minAppVersion": "1.14.4",
+  "version": "1.0.5",
+  "minAppVersion": "1.2.7",
   "description": "Navigate long notes with a compact heading rail, customizable scroll tracking, hover previews, and heading bookmarks.",
   "isDesktopOnly": false,
   "author": "Mars-den",
