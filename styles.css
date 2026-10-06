@@ -73,12 +73,12 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  scrollbar-width: none;
   min-width: calc(2 * var(--ss-hitbox, 36px) + max(
     var(--ss-expand-width, 30px),
     calc(var(--ss-tick-width, 16px) + var(--ss-wave-boost, 30px) + max(var(--ss-active-boost, 4px), var(--ss-passed-boost, 0px)))
   ));
 }
+/* Electron and iOS WebKit support this without the newer scrollbar-width API. */
 .scrollspy-rail.is-dense::-webkit-scrollbar { display: none; }
 .scrollspy-rail.is-dense.can-scrub { touch-action: pan-y; }
 .scrollspy-rail.is-dense .scrollspy-tick { min-height: 24px; box-sizing: border-box; align-items: center; }

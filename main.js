@@ -710,7 +710,7 @@ class RailView {
     this.updateBookmarkButton();
     this.flyoutTitle.setText(label.title);
 
-    this.flyoutPercent.setText(settings.showPercent ? `${label.percent}%` : "");
+    this.flyoutPercent.setText(settings.showPercent && label.percent != null ? `${label.percent}%` : "");
     this.flyoutPercent.toggleClass("is-hidden", !settings.showPercent);
 
     const preview = settings.showPreview ? label.preview : "";
@@ -853,6 +853,7 @@ class DocumentRail extends RailView {
   }
 
   destroy() {
+    this.sourceEpoch = (this.sourceEpoch || 0) + 1;
     this.bookmarksPlugin?.off?.("changed", this.onBookmarksChanged);
     this.detachScroller();
     this.resizeObserver.disconnect();
@@ -913,6 +914,7 @@ class DocumentRail extends RailView {
   // pixels because that is the unit the rest of the plugin already works in,
   // and it does not change with window width or folded sections.
   percentAt(index) {
+    if ((this.headings.at(-1)?.position.start.line ?? -1) >= this.lines.length) return null;
     const span = Math.max(1, this.lines.length - 1);
     const line = this.headings[index].position.start.line;
     return Math.min(100, Math.round((line / span) * 100));
@@ -1036,6 +1038,8 @@ class DocumentRail extends RailView {
       this.rebuild();
       return;
     }
+    // A rail may be created before the view has received its note content.
+    if (!this.sourceReady) this.refreshSource();
     // Mode or renderer replacement needs rebinding, not a note read or new ticks.
     this.attachScroller();
     this.syncWidth();
@@ -1062,7 +1066,7 @@ class DocumentRail extends RailView {
     // Cached here rather than read on hover: rebuild already runs on every
     // metadata change, so this stays as fresh as the heading list itself.
     // Always needed now -- the visible-range calculation counts lines too.
-    this.lines = this.view.getViewData().split("\n");
+    this.refreshSource();
 
     this.render(this.headings.map((heading) => heading.level));
     this.el.toggleClass("is-hidden", this.headings.length < settings.minHeadings);
@@ -1072,6 +1076,25 @@ class DocumentRail extends RailView {
     this.attachScroller();
     this.syncWidth();
     this.syncActive();
+  }
+
+  refreshSource() {
+    const epoch = this.sourceEpoch = (this.sourceEpoch || 0) + 1;
+    const file = this.view.file;
+    const lines = this.view.getViewData().split("\n");
+    const lastHeading = this.headings.at(-1)?.position.start.line ?? -1;
+    this.sourceReady = lines.length > lastHeading;
+    this.lines = lines;
+    if (this.sourceReady || !file || !this.view.app.vault?.cachedRead) return;
+    // Metadata can arrive before reading mode receives its text. Read the same
+    // file once, keeping navigation/file changes from accepting an old result.
+    this.view.app.vault.cachedRead(file).then(text => {
+      if (this.sourceEpoch !== epoch || this.view.file !== file) return;
+      this.lines = text.split("\n");
+      this.sourceReady = this.lines.length > lastHeading;
+      this.syncActive();
+      if (this.flyoutIndex >= 0) this.showFlyout(this.flyoutIndex);
+    }).catch(() => {}); // A later layout/metadata refresh can retry a failed read.
   }
 
   scrollTopLine() {

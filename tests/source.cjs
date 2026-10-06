@@ -1,0 +1,41 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {} }), module: { exports: {} } };
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8') + '\nmodule.exports = {DocumentRail};', context);
+const { DocumentRail } = context.module.exports;
+const text = Array.from({length: 101}, (_, i) => `Line ${i}`).join('\n');
+function fixture() {
+  const rail = Object.create(DocumentRail.prototype);
+  const file = {path: 'note.md'};
+  let resolve;
+  rail.view = {file, getViewData: () => '', app: {vault: {cachedRead: () => new Promise(done => { resolve = done; })}}};
+  rail.headings = [0, 25, 75, 100].map(line => ({position: {start: {line}}}));
+  rail.lines = [];
+  rail.flyoutIndex = 1;
+  rail.syncActive = () => { rail.updates = (rail.updates || 0) + 1; };
+  rail.showFlyout = index => { rail.labelPercent = rail.percentAt(index); };
+  return {rail, resolve: value => resolve(value)};
+}
+(async () => {
+  const {rail, resolve} = fixture();
+  rail.refreshSource();
+  assert.equal(rail.sourceReady, false);
+  assert.equal(rail.percentAt(1), null, 'Do not report 100% from an empty startup view');
+  resolve(text); await Promise.resolve();
+  assert.equal(rail.sourceReady, true);
+  assert.deepEqual([0,1,2,3].map(i => rail.percentAt(i)), [0,25,75,100]);
+  assert.equal(rail.labelPercent, 25, 'An already-open label updates when source loads');
+  assert.equal(rail.updates, 1);
+  const stale = fixture(); stale.rail.refreshSource();
+  stale.rail.view.file = {path: 'other.md'};
+  stale.resolve(text); await Promise.resolve();
+  assert.equal(stale.rail.lines.length, 1, 'An old file read cannot replace the new file');
+  const newer = fixture(); newer.rail.refreshSource();
+  newer.rail.view.getViewData = () => text + '\nnew line';
+  newer.rail.refreshSource(); newer.resolve(text); await Promise.resolve();
+  assert.equal(newer.rail.lines.length, 102, 'A late read cannot replace newer editor data');
+  assert.equal(newer.rail.sourceReady, true);
+  console.log('Source checks passed: startup percentages, open-label refresh, file changes and stale reads.');
+})().catch(error => { console.error(error); process.exitCode = 1; });
