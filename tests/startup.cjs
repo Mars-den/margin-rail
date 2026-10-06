@@ -11,7 +11,7 @@ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../main.js
   const plugin = new context.module.exports();
   const workspaceEvents = new Map(), cacheEvents = new Map();
   let layoutReady, command, refreshes = 0;
-  plugin.loadData = async () => ({ hideBelowWidth: 0 });
+  plugin.loadData = async () => null;
   plugin.addSettingTab = () => {};
   plugin.applyStyles = () => {};
   plugin.registerEvent = () => {};
@@ -22,6 +22,12 @@ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../main.js
     onLayoutReady(callback) { layoutReady = callback; }, getActiveViewOfType: () => view },
     metadataCache: { on(name, callback) { cacheEvents.set(name, callback); } } };
   await plugin.onload();
+  assert.equal(plugin.settings.trackingMode, 'position', 'Fresh installs follow the note');
+  for (const trackingMode of ['length', 'equal', 'off', 'position']) {
+    plugin.loadData = async () => ({ trackingMode, hideBelowWidth: 0 });
+    await plugin.onload();
+    assert.equal(plugin.settings.trackingMode, trackingMode, 'Saved tracking choices survive loading');
+  }
   layoutReady(); assert.equal(refreshes, 1);
   cacheEvents.get('resolved')(); assert.equal(refreshes, 2);
   workspaceEvents.get('layout-change')(); assert.equal(refreshes, 3);
