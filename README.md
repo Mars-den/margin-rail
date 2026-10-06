@@ -19,7 +19,7 @@ release; Android and tablet testing is still welcome.
 Until this plugin is listed in Obsidian’s community directory:
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the
-   [latest GitHub release](https://github.com/PZTHH/margin/releases/latest).
+   [latest GitHub release](https://github.com/Mars-den/margin/releases/latest).
 2. Create `.obsidian/plugins/scrollspy-rail/` inside your vault and put those three
    files in it.
 3. Restart Obsidian, enable community plugins, and enable **Margin**.
@@ -35,12 +35,12 @@ The bookmark button uses Obsidian’s enabled Bookmarks core plugin. Scroll mapp
 and bookmark integration use guarded internal APIs, which can change between
 Obsidian releases. If something breaks, please report the Obsidian version,
 device, reading/editing mode, and steps to reproduce in
-[GitHub Issues](https://github.com/PZTHH/margin/issues).
+[GitHub Issues](https://github.com/Mars-den/margin/issues).
 
 ## License
 
 [MIT](LICENSE). You may use, modify, and redistribute it under that license.
-Developed with AI assistance; maintained by [PZTHH](https://github.com/PZTHH).
+Developed with AI assistance; maintained by [Mars-den](https://github.com/Mars-den).
 
 ## Configuration
 
