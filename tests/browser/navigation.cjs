@@ -40,6 +40,9 @@ const root = path.resolve(__dirname, '../..');
       window.rail = new TestRail({ settings, applyStyles: module.exports.prototype.applyStyles }, document.querySelector('#host'));
       rail.render(Array.from({ length: 200 }, (_, i) => i % 6 + 1));
     });
+    assert.equal(await page.getByRole('listbox', { name: 'Note headings', exact: true }).count(), 1);
+    assert.equal(await page.locator('[role="listbox"]').getAttribute('aria-label'), null,
+      'The rail name must not trigger Obsidian hover tooltips');
     const layout = () => page.evaluate(() => {
       const box = rail.el.getBoundingClientRect(), host = rail.host.getBoundingClientRect();
       return { top: box.top, bottom: box.bottom, hostTop: host.top, hostBottom: host.bottom,
@@ -144,11 +147,36 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.evaluate(() => document.activeElement === rail.flyoutBookmark), true);
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.activeElement === rail.el && rail.keyboardIndex === -1), true);
+    // The settings sample has uneven branches. Crossing them repeatedly must
+    // resolve each branch from the resting placement, without cumulative drift.
+    const placements = await page.evaluate(() => {
+      rail.dismissKeyboard(); rail.host.style.height = '360px';
+      Object.assign(rail.settings, { hierarchyMode: 'nearby', idleLevels: 2, anchor: 'middle', axisOffset: 0 });
+      rail.render([1,2,3,3,2,3,3,2,3,1,2]);
+      const result = [];
+      for (let cycle = 0; cycle < 4; cycle++) {
+        for (const index of [0,1,4,7,9,10]) {
+          rail.measure();
+          rail.revealAt(rail.el.children[index].getBoundingClientRect().top + 4);
+          result.push({ index, top: rail.el.getBoundingClientRect().top });
+        }
+      }
+      rail.onLeave();
+      return { result, shiftAfterLeave: rail.el.style.translate };
+    });
+    const first = new Map();
+    for (const {index, top} of placements.result) {
+      if (!first.has(index)) first.set(index, top);
+      assert.ok(Math.abs(first.get(index) - top) < 0.5, `Hover moved branch ${index} from ${first.get(index)} to ${top}`);
+    }
+    assert.equal(placements.shiftAfterLeave, '');
     if (process.env.RAIL_SCREENSHOT) {
       await page.evaluate(() => { rail.keyboardFocused = true; rail.selectKeyboard(30); });
       await page.waitForTimeout(160);
       await page.screenshot({ path: process.env.RAIL_SCREENSHOT });
     }
+    await page.evaluate(() => rail.destroy());
+    assert.equal(await page.locator('[id$="-label"]').count(), 0, 'Accessible names are removed on unload');
     console.log('Browser checks passed: 200 headings, every anchor/offset, resize, wheel/hover/click, full-range drag, single Tab stop, nested keyboard access, focus, labels, dismissal, color-mix.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

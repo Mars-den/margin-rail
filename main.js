@@ -285,7 +285,12 @@ class RailView {
     this.el = hostEl.createDiv({ cls: "scrollspy-rail" });
     this.el.tabIndex = 0;
     this.el.setAttribute("role", "listbox");
-    this.el.setAttribute("aria-label", "Note headings");
+    // Obsidian turns aria-label into a pointer tooltip. A referenced name keeps
+    // the listbox accessible without competing with our heading flyout.
+    this.accessibleLabel = hostEl.createSpan({ text: "Note headings" });
+    this.accessibleLabel.id = `${this.railId}-label`;
+    this.accessibleLabel.hidden = true;
+    this.el.setAttribute("aria-labelledby", this.accessibleLabel.id);
     this.el.setAttribute("aria-orientation", "vertical");
     this.el.setAttribute("aria-description", "Arrow keys select a heading, Home and End select the first and last. Enter jumps. Escape dismisses. Scroll to browse long outlines.");
     this.el.addEventListener("focus", () => {
@@ -375,6 +380,7 @@ class RailView {
     if (this.waveFrame) cancelAnimationFrame(this.waveFrame);
     if (this.drag && this.el.hasPointerCapture(this.drag.id)) this.el.releasePointerCapture(this.drag.id);
     this.el.remove();
+    this.accessibleLabel.remove();
     this.flyout.remove();
   }
 
@@ -620,25 +626,35 @@ class RailView {
     const root = headingBranches(this.levels, this.settings.idleLevels)[index];
     if (root === this.expandedBranch) return;
     const tick = this.el.children[index];
-    const before = tick.getBoundingClientRect().top;
-    this.expandedBranch = root;
-    this.updateHierarchy();
-    // Opening a branch must not move the pointed heading out from under the
-    // pointer, especially with a middle or bottom anchor.
     if (this.dense) {
-      // Keep the opened branch at the pointer without moving the bounded strip.
+      const before = tick.getBoundingClientRect().top;
+      this.expandedBranch = root;
+      this.updateHierarchy();
       this.el.scrollTop += tick.getBoundingClientRect().top - before;
       this.measure();
       return;
     }
-    let shift = before - tick.getBoundingClientRect().top;
-    if (this.host) {
-      const host = this.host.getBoundingClientRect(), rail = this.el.getBoundingClientRect();
-      shift = Math.max(host.top + 16 - rail.top, Math.min(shift, host.bottom - 16 - rail.bottom));
+    // Measure against the resting branch root, never the previous hover shift.
+    // Otherwise traversing branches repeatedly can walk the rail down the pane.
+    this.expandedBranch = -1;
+    this.el.style.translate = "";
+    this.el.style.removeProperty("--ss-reveal-shift");
+    this.updateHierarchy();
+    const branchTick = this.el.children[root];
+    const before = branchTick.getBoundingClientRect().top;
+    this.expandedBranch = root;
+    this.updateHierarchy();
+    if (this.dense) {
+      this.el.scrollTop += branchTick.getBoundingClientRect().top - before;
+    } else {
+      let shift = before - branchTick.getBoundingClientRect().top;
+      if (this.host) {
+        const host = this.host.getBoundingClientRect(), rail = this.el.getBoundingClientRect();
+        shift = Math.max(host.top + 16 - rail.top, Math.min(shift, host.bottom - 16 - rail.bottom));
+      }
+      this.el.style.setProperty("--ss-reveal-shift", String(shift));
+      this.el.style.translate = `0 ${shift}px`;
     }
-    const offset = Number.parseFloat(this.el.style.getPropertyValue("--ss-reveal-shift")) || 0;
-    this.el.style.setProperty("--ss-reveal-shift", String(offset + shift));
-    this.el.style.translate = `0 ${offset + shift}px`;
     this.measure();
   }
 
