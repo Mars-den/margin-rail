@@ -88,6 +88,7 @@ assert.equal(updates, 2);
 // Simulate a middle-anchored rail changing height when a branch opens.
 const branch = rail();
 branch.plugin.settings.hierarchyMode = 'nearby';
+branch.plugin.settings.idleLevels = 2;
 branch.levels = [1, 2, 3, 3, 2, 3];
 branch.el.children = branch.levels.map((_, index) => {
   const item = tick(0);

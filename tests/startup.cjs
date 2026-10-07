@@ -22,7 +22,7 @@ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../main.js
     onLayoutReady(callback) { layoutReady = callback; }, getActiveViewOfType: () => view },
     metadataCache: { on(name, callback) { cacheEvents.set(name, callback); } } };
   await plugin.onload();
-  assert.equal(plugin.settings.trackingMode, 'position', 'Fresh installs follow the note');
+  assert.equal(plugin.settings.trackingMode, 'length', 'Fresh installs use the saved v2 tracking');
   for (const trackingMode of ['length', 'equal', 'off', 'position']) {
     plugin.loadData = async () => ({ trackingMode, hideBelowWidth: 0 });
     await plugin.onload();

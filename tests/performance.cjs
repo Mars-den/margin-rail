@@ -30,7 +30,7 @@ function documentFixture() {
 }
 function element(doc) {
   const classes = new Set(), events = new Map();
-  const el = { ownerDocument: doc, style: style(), children: [], clientWidth: 900,
+  const el = { ownerDocument: doc, dataset: {}, style: style(), children: [], clientWidth: 900,
     classList: { contains: k => classes.has(k), add: k => classes.add(k), remove: k => classes.delete(k),
       toggle(k, v) { if (v) classes.add(k); else classes.delete(k); } },
     addClass(k) { classes.add(k); }, removeClass(k) { classes.delete(k); },

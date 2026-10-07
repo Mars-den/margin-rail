@@ -33,6 +33,7 @@ const {
   Setting,
   MarkdownView,
   Notice,
+  Menu,
   setIcon,
   getIcon,
   Platform,
@@ -41,7 +42,7 @@ const {
 // A heading counts as current once its line reaches just past the viewport top.
 const LOOKAHEAD_LINES = 1;
 
-/* The built-in v1 preset is the user's finished setup and the fresh-install default. */
+/* The saved v2 setup is the fresh-install default. */
 const DEFAULTS = {
   // Position
   side: "right",
@@ -55,9 +56,11 @@ const DEFAULTS = {
   tickRadius: 1,
   tickGap: 8,
   levelIndent: 0,
+  markAlignment: "edge", // edge | left | center | right
+  progressDirection: "left", // left | right | center
 
   // Hover
-  hoverStyle: "wave", // "wave" | "pill" | "none"
+  hoverStyle: "wave", // wave | pill | focus | dot | none
   hitbox: 36,
   waveBoost: 30,
   waveReach: 60,
@@ -70,7 +73,7 @@ const DEFAULTS = {
   // Current section
   activeMode: "single", // "single" | "visible"
   activeBoost: 4,
-  trackingMode: "position", // position | length | equal | off
+  trackingMode: "length", // position | length | equal | off
   lastAtBottom: true,
   activeOpacity: 1,
   passedOpacity: 0.4,
@@ -85,18 +88,22 @@ const DEFAULTS = {
   // Labels
   showLabels: true,
   labelOffset: 10,
+  labelMotion: "fade", // none | fade | slide
+  labelDuration: 120,
+  labelMoveMotion: "none", // none | slide; between marks
+  labelMoveDuration: 120,
   showPercent: true,
   showPreview: true,
   showBookmarkButton: true,
   previewLength: 120,
 
   // Behaviour
-  minHeadings: 3,
+  minHeadings: 4,
   hideBelowWidth: 500,
   markPassed: true,
   dragToScrub: true,
   hierarchyMode: "nearby", // all | nearby
-  idleLevels: 2,
+  idleLevels: 6,
   showSectionProgress: false,
 };
 
@@ -105,8 +112,9 @@ const DEFAULTS = {
 const SESSION_DEFAULTS = {
   activePreset: "default",
   presets: [], // [{ id, name, values }]
+  sourcePresetId: null, // Saved preset being customized; survives Custom (unsaved).
   showAdvanced: false,
-  settingsSection: "tracking",
+  settingsSection: "appearance",
   previewCollapsed: false,
   phoneVisibility: "hidden", // hidden | landscape | always; independent of presets
 };
@@ -114,7 +122,13 @@ const SESSION_DEFAULTS = {
 const PRESET_KEYS = Object.keys(DEFAULTS);
 
 const BUILTIN_PRESETS = [
-  { id: "default", name: "v1", description: "Default: slim neutral ticks, a focused wave, note-following tracking, and full labels with bookmarks.", values: DEFAULTS },
+  { id: "default", name: "v2", description: "Default: slim neutral ticks, a focused wave, section-length tracking, and full labels with bookmarks.", values: DEFAULTS },
+  { id: "builtin-absolutely", name: "Absolutely", description: "Inspired by Claude’s restrained styling: fine, widely spaced marks on the left, with simple heading labels.", values: {
+    ...DEFAULTS, side: "left", edgeOffset: 0, tickWidth: 18, tickHeight: 1,
+    tickGap: 20, hoverStyle: "none", activeBoost: 8, hoverOpacity: 0.25, animDuration: 400,
+    labelMotion: "slide", labelMoveMotion: "slide",
+    showPercent: false, showPreview: false,
+  } },
   { id: "builtin-quiet", name: "Quiet", description: "A minimal rail that follows the note, with a gentle hover and title-only labels.", values: {
     ...DEFAULTS, hoverStyle: "none", activeBoost: 0, tickGap: 6,
     trackingMode: "position", idleOpacity: 0.18, passedOpacity: 0.25,
@@ -125,10 +139,10 @@ const BUILTIN_PRESETS = [
     hoverStyle: "pill", trackingMode: "position", colorMode: "accent",
     showPreview: false,
   } },
-  { id: "builtin-progress", name: "Progress", description: "Every heading gets an equal scroll share. The current tick fills as you read its section.", values: {
+  { id: "builtin-progress", name: "Progress", description: "Equal scroll shares, square marks with a hover swell, and section progress filling from right to left.", values: {
     ...DEFAULTS, trackingMode: "equal", showSectionProgress: true,
-    colorMode: "accent", tickWidth: 24, tickHeight: 4, tickRadius: 2,
-    showPreview: false,
+    colorMode: "accent", tickWidth: 24, tickHeight: 3, tickRadius: 0,
+    progressDirection: "right", showPreview: false, labelMotion: "none", labelMoveMotion: "none",
   } },
 ];
 
@@ -276,6 +290,7 @@ class RailView {
     this.flyoutIndex = -1;
     this.bookmarkBusy = false;
     this.overFlyout = false;
+    this.flyoutPointerFocus = false;
     this.keyboardFocused = false;
     this.keyboardIndex = -1;
     this.railId = `margin-rail-${++nextRailId}`;
@@ -294,6 +309,8 @@ class RailView {
     this.el.setAttribute("aria-orientation", "vertical");
     this.el.setAttribute("aria-description", "Arrow keys select a heading, Home and End select the first and last. Enter jumps. Escape dismisses. Scroll to browse long outlines.");
     this.el.addEventListener("focus", () => {
+      this.cancelLeave();
+      this.flyoutPointerFocus = false;
       this.keyboardFocused = true;
       this.selectKeyboard(Math.max(0, this.activeIndex));
     });
@@ -325,12 +342,16 @@ class RailView {
     this.flyoutBookmark.addEventListener("click", async (evt) => {
       evt.stopPropagation();
       if (this.bookmarkBusy || this.flyoutIndex < 0) return;
+      const index = this.flyoutIndex;
       this.bookmarkBusy = true;
-      this.flyoutBookmark.disabled = true;
-      try { await this.bookmarkHeading(this.flyoutIndex); }
+      // Native disabled blurs a focused button synchronously. That dismisses
+      // the flyout and clears its heading before the bookmark can be written.
+      this.updateBookmarkButton();
+      try { await this.bookmarkHeading(index); }
       catch (error) { new Notice("Could not bookmark this heading. Try again from Obsidian’s Bookmarks."); }
       finally { this.bookmarkBusy = false; this.paintBookmarks(); this.updateBookmarkButton(); }
     });
+    this.flyout.addEventListener("pointerdown", () => { this.flyoutPointerFocus = true; });
     this.flyout.addEventListener("pointerenter", () => { this.overFlyout = true; this.cancelHoverFrame(); this.cancelLeave(); });
     this.flyout.addEventListener("pointerleave", () => { this.overFlyout = false; this.scheduleLeave(); });
     this.flyout.addEventListener("focusin", () => this.cancelLeave());
@@ -341,6 +362,8 @@ class RailView {
       }
     });
     this.flyout.addEventListener("keydown", (event) => {
+      this.cancelLeave();
+      this.flyoutPointerFocus = false;
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
@@ -375,6 +398,7 @@ class RailView {
   }
 
   destroy() {
+    this.cancelLabelMotion();
     if (this.ownsHostClass) this.host.classList.remove("margin-rail-host");
     this.cancelLeave();
     if (this.waveFrame) cancelAnimationFrame(this.waveFrame);
@@ -417,11 +441,13 @@ class RailView {
   scheduleLeave() {
     this.cancelHoverFrame();
     this.cancelLeave();
-    if (this.keyboardFocused || this.overFlyout || this.flyout.contains(this.host.ownerDocument?.activeElement)) return;
+    if (this.overFlyout || (!this.flyoutPointerFocus &&
+      (this.keyboardFocused || this.flyout.contains(this.host.ownerDocument?.activeElement)))) return;
+    const leave = () => this.flyoutPointerFocus ? this.dismissKeyboard() : this.onLeave();
     if (this.settings.showBookmarkButton && this.settings.showLabels) {
       // Leave time to cross the gap between a tick and its actionable label.
-      this.leaveTimer = setTimeout(() => { this.leaveTimer = 0; this.onLeave(); }, 250);
-    } else this.onLeave();
+      this.leaveTimer = setTimeout(() => { this.leaveTimer = 0; leave(); }, 250);
+    } else leave();
   }
 
   updateBookmarkButton() {
@@ -439,7 +465,8 @@ class RailView {
     // aria-label supplies Obsidian’s tooltip; title would add a second native one.
     this.flyoutBookmark.removeAttribute("title");
     this.flyoutBookmark.setAttribute("aria-label", title);
-    this.flyoutBookmark.disabled = this.bookmarkBusy || !state.available;
+    this.flyoutBookmark.disabled = !state.available;
+    this.flyoutBookmark.setAttribute("aria-busy", String(this.bookmarkBusy));
     this.flyoutBookmark.toggleClass("is-bookmarked", state.saved);
   }
 
@@ -466,7 +493,7 @@ class RailView {
     const used = s.anchor === "middle" ? 2 * Math.abs(offset) : Math.abs(offset);
     const available = Math.max(0, height - 32 - used);
     const count = Array.from(this.el.children).filter(tick => !tick.hidden).length;
-    const swell = s.hoverStyle === "pill" ? Math.max(0, s.expandHeight - s.tickHeight) : 0;
+    const swell = ["pill", "dot"].includes(s.hoverStyle) ? Math.max(0, s.expandHeight - s.tickHeight) : 0;
     const natural = 20 + swell + count * (s.tickHeight + 6) + Math.max(0, count - 1) * Math.max(0, s.tickGap - 6);
     this.dense = natural > available;
     this.el.toggleClass("is-dense", this.dense);
@@ -671,6 +698,7 @@ class RailView {
   setHovered(index) {
     if (index === this.hoveredIndex) return;
     this.hoveredIndex = index;
+    this.el.toggleClass("is-pointing", index >= 0);
 
     const ticks = this.el.children;
     for (let i = 0; i < ticks.length; i++) {
@@ -722,6 +750,11 @@ class RailView {
     const tick = this.el.children[index];
     if (!label || !tick) return;
 
+    const switching = settings.labelMoveMotion === "slide" && this.flyoutIndex >= 0 &&
+      this.flyoutIndex !== index && this.flyout.classList.contains("is-visible");
+    // Retarget from the on-screen position when moving quickly between marks.
+    const fromTop = switching ? this.flyout.ownerDocument.defaultView.getComputedStyle(this.flyout).top : null;
+    if (switching) this.cancelLabelMotion();
     this.flyoutIndex = index;
     this.updateBookmarkButton();
     this.flyoutTitle.setText(label.title);
@@ -740,10 +773,27 @@ class RailView {
     const center = box.top - host.top + box.height / 2;
     this.flyout.toggleClass("is-visible", true);
     const half = this.flyout.getBoundingClientRect().height / 2;
-    this.flyout.style.top = `${Math.max(half, Math.min(host.height - half, center))}px`;
+    const top = `${Math.max(half, Math.min(host.height - half, center))}px`;
+    this.flyout.style.top = top;
+    const reduced = this.flyout.ownerDocument.defaultView.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (switching && !reduced && settings.labelMoveDuration > 0 && this.flyout.animate) {
+      const timing = { duration: settings.labelMoveDuration, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" };
+      this.labelAnimations = [this.flyout.animate([{ top: fromTop }, { top }], timing)];
+    }
+  }
+
+  cancelLabelMotion() {
+    for (const animation of this.labelAnimations || []) animation.cancel();
+    this.labelAnimations = [];
   }
 
   hideFlyout() {
+    // Start hiding where the moving label currently is, without snapping to
+    // its previous destination when a glide is interrupted.
+    const top = this.labelAnimations?.length
+      ? this.flyout.ownerDocument.defaultView.getComputedStyle(this.flyout).top : null;
+    this.cancelLabelMotion();
+    if (top) this.flyout.style.top = top;
     this.cancelLeave();
     this.flyoutIndex = -1;
     this.overFlyout = false;
@@ -761,11 +811,17 @@ class RailView {
     this.el.toggleClass("anchor-bottom", settings.anchor === "bottom");
     this.flyout.toggleClass("is-left", settings.side === "left");
     this.flyout.toggleClass("is-right", settings.side !== "left");
+    this.flyout.dataset.labelMotion = settings.labelMotion || "fade";
 
     this.el.toggleClass("can-scrub", settings.dragToScrub);
     this.el.toggleClass("has-section-progress", settings.showSectionProgress);
+    this.el.dataset.markAlignment = settings.markAlignment || "edge";
+    this.el.dataset.progressDirection = settings.progressDirection || "left";
     this.el.toggleClass("hover-wave", settings.hoverStyle === "wave");
     this.el.toggleClass("hover-pill", settings.hoverStyle === "pill");
+    this.el.toggleClass("hover-focus", settings.hoverStyle === "focus");
+    this.el.toggleClass("hover-dot", settings.hoverStyle === "dot");
+    this.el.toggleClass("is-pointing", this.hoveredIndex >= 0);
   }
 
   updateSettings() {
@@ -1243,7 +1299,7 @@ class PreviewRail extends RailView {
     const s = this.settings;
     const height = this.levels.length * (s.tickHeight + 6) +
       Math.max(0, this.levels.length - 1) * Math.max(0, s.tickGap - 6) + 20;
-    this.host.style.height = `${Math.max(180, height + 64)}px`;
+    this.host.style.height = `${Math.min(200, Math.max(160, height + 64))}px`;
     this.fitPane();
   }
 
@@ -1311,6 +1367,8 @@ class ScrollspySettingTab extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
     this.draftName = "";
+    this.updateTargetId = plugin.settings.activePreset === "custom"
+      ? plugin.settings.sourcePresetId : plugin.settings.activePreset;
     this.preview = null;
     this.previewProgress = 0.4;
     this.sectionScroll = {};
@@ -1334,16 +1392,27 @@ class ScrollspySettingTab extends PluginSettingTab {
     }
     if (this.updateSimulation) this.updateSimulation();
     if (this.presetDrop) {
-      if (this.plugin.settings.activePreset === "custom") this.presetDrop.addOption("custom", "Custom (unsaved)");
+      const customOptions = Array.from(this.presetDrop.selectEl.options).filter(option => option.value === "custom");
+      const unsaved = this.plugin.settings.activePreset === "custom";
+      // Obsidian's addOption always appends, including on every slider event.
+      for (const [index, option] of customOptions.entries()) {
+        if (!unsaved || index > 0) option.remove();
+      }
+      if (unsaved && !customOptions.length) this.presetDrop.addOption("custom", "Custom (unsaved)");
       this.presetDrop.setValue(this.plugin.settings.activePreset);
     }
+    if (this.presetUpdateEl) this.renderPresetUpdate();
     if (render) this.display();
   }
 
   // Touching anything a preset captures means you are no longer on that preset.
   // Saying so beats leaving a stale name at the top of the tab.
   edited(key) {
-    if (PRESET_KEYS.includes(key)) this.plugin.settings.activePreset = "custom";
+    if (PRESET_KEYS.includes(key)) {
+      const active = this.plugin.settings.activePreset;
+      if (active !== "custom") this.plugin.settings.sourcePresetId = active;
+      this.plugin.settings.activePreset = "custom";
+    }
   }
 
   capture() {
@@ -1391,18 +1460,35 @@ class ScrollspySettingTab extends PluginSettingTab {
       text: format(this.plugin.settings[key]),
     });
 
-    // Use one native input: recent Obsidian versions add their own raw-number
-    // readout to SliderComponent, which duplicates our formatted units.
+    // Native inputs let dragging and exact entry share one value. Keep the
+    // formatted readout for units and opacity percentages.
     const input = setting.controlEl.createEl("input", { type: "range" });
     input.min = String(min);
     input.max = String(max);
     input.step = String(step);
     input.value = String(this.plugin.settings[key]);
+    const number = setting.controlEl.createEl("input", { type: "number", cls: "scrollspy-number" });
+    number.min = String(min); number.max = String(max); number.step = String(step);
+    number.value = String(this.plugin.settings[key]);
+    number.setAttribute("aria-label", `${name} value`);
+    number.addEventListener("change", () => {
+      const value = Number(number.value);
+      if (!number.value || !Number.isFinite(value) || value < min || value > max) {
+        number.value = String(this.plugin.settings[key]); return;
+      }
+      this.plugin.settings[key] = value;
+      input.value = String(value);
+      readout.setText(format(value));
+      input.setAttribute("aria-valuetext", format(value));
+      this.edited(key); this.save(false);
+    });
+    setting.controlEl.appendChild(readout);
     input.setAttribute("aria-label", name);
     input.setAttribute("aria-valuetext", format(this.plugin.settings[key]));
     input.addEventListener("input", () => {
       const value = Number(input.value);
       readout.setText(format(value));
+      number.value = String(value);
       input.setAttribute("aria-valuetext", format(value));
       this.plugin.settings[key] = value;
       this.edited(key);
@@ -1426,6 +1512,114 @@ class ScrollspySettingTab extends PluginSettingTab {
       );
   }
 
+  normalChoice(parent, name, desc, id, options) {
+    const s = this.plugin.settings;
+    const matches = values => Object.entries(values).every(([key, value]) => s[key] === value);
+    const selected = Object.keys(options).find(key => matches(options[key][1]));
+    new Setting(parent).setName(name).setDesc(desc).addDropdown(drop => {
+      drop.selectEl.dataset.setting = id;
+      for (const [key, [label]] of Object.entries(options)) drop.addOption(key, label);
+      if (!selected) {
+        drop.addOption("custom", "Custom");
+        drop.selectEl.querySelector('option[value="custom"]').disabled = true;
+      }
+      drop.setValue(selected || "custom").onChange(value => {
+        const choice = options[value];
+        if (!choice) return;
+        for (const [key, setting] of Object.entries(choice[1])) {
+          s[key] = setting;
+          this.edited(key);
+        }
+        this.save(true);
+        this.containerEl.querySelector(`select[data-setting="${id}"]`)?.focus({ preventScroll: true });
+      });
+    });
+  }
+
+  renderEditorMode() {
+    const row = this.containerEl.createDiv({ cls: "scrollspy-editor-mode" });
+    row.createSpan({ text: "Customize" });
+    const group = row.createDiv({ cls: "scrollspy-mode-buttons" });
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "Customization mode");
+    for (const [advanced, label] of [[false, "Normal"], [true, "Advanced"]]) {
+      const button = group.createEl("button", { text: label, type: "button" });
+      button.setAttribute("aria-pressed", String(!!this.plugin.settings.showAdvanced === advanced));
+      button.addEventListener("click", () => {
+        this.plugin.settings.showAdvanced = advanced;
+        this.save(true);
+        this.containerEl.querySelector(`.scrollspy-mode-buttons button[aria-pressed="true"]`)?.focus({ preventScroll: true });
+      });
+    }
+    if (this.plugin.settings.showAdvanced) row.createSpan({ cls: "setting-item-description", text: "Fine-tune every value." });
+  }
+
+  renderNormalAppearance(s) {
+    const shape = this.heading("Marks");
+    this.normalChoice(shape, "Length", "How far each resting mark reaches into the note.", "markLength", {
+      short: ["Short", { tickWidth: 12 }], standard: ["Standard", { tickWidth: 16 }],
+      extended: ["Extended", { tickWidth: 18 }], long: ["Long", { tickWidth: 24 }],
+    });
+    this.normalChoice(shape, "Shape", "", "markShape", {
+      fine: ["Hairline", { tickHeight: 1, tickRadius: 1 }],
+      bar: ["Bar", { tickHeight: 3, tickRadius: 1 }],
+      square: ["Square", { tickHeight: 3, tickRadius: 0 }],
+      rounded: ["Rounded", { tickHeight: 4, tickRadius: 2 }],
+    });
+    this.normalChoice(shape, "Spacing", "Space between neighbouring marks.", "markSpacing", {
+      compact: ["Compact", { tickGap: 4 }], standard: ["Standard", { tickGap: 8 }],
+      open: ["Open", { tickGap: 14 }], airy: ["Airy", { tickGap: 20 }],
+    });
+    this.normalChoice(shape, "Heading depth", "Shorten nested headings to suggest an outline.", "headingDepth", {
+      flat: ["Uniform", { levelIndent: 0 }], subtle: ["Subtle", { levelIndent: 2 }], outline: ["Outline", { levelIndent: 4 }],
+    });
+    this.renderMarkAlignment(shape);
+    const visibility = this.heading("Emphasis");
+    this.normalChoice(visibility, "Visibility", "Idle, passed and current heading visibility.", "visibility", {
+      subtle: ["Subtle", { idleOpacity: 0.15, passedOpacity: 0.25, activeOpacity: 0.8 }],
+      balanced: ["Balanced", { idleOpacity: 0.25, passedOpacity: 0.4, activeOpacity: 1 }],
+      prominent: ["Prominent", { idleOpacity: 0.5, passedOpacity: 0.65, activeOpacity: 1 }],
+    });
+    this.normalChoice(visibility, "Pointer nearby", "Visibility of the rail while you point at it.", "pointerVisibility", {
+      quiet: ["Subtle", { hoverOpacity: 0.25 }], balanced: ["Balanced", { hoverOpacity: 0.55 }], full: ["Full", { hoverOpacity: 1 }],
+    });
+    this.normalChoice(visibility, "Current mark", "Extra length for the current heading.", "currentEmphasis", {
+      none: ["Same length", { activeBoost: 0 }], subtle: ["Slightly longer", { activeBoost: 4 }], strong: ["Longer", { activeBoost: 8 }],
+    });
+    this.toggle(visibility, "Distinguish passed headings", "Use the passed visibility for earlier headings.", "markPassed", false);
+    this.renderHeadingChoices(s);
+    this.renderColour(s);
+  }
+
+  renderMarkAlignment(parent) {
+    this.choices(parent, "Mark alignment", "Align marks of different lengths within the rail.", "markAlignment", {
+      edge: ["Follow rail side", "Align with the side of the note."],
+      left: ["Left", "Line up the left ends."], center: ["Centre", "Centre every mark."], right: ["Right", "Line up the right ends."],
+    });
+  }
+
+  renderHeadingChoices(s) {
+    const hierarchy = this.heading("Headings");
+    this.choices(hierarchy, "Which headings to show", "The current heading stays visible in either mode.", "hierarchyMode", {
+      all: ["All headings", "Keep every heading visible."],
+      nearby: ["Reveal nearby", "Hover a heading to reveal the deeper headings in its branch."],
+    });
+    if (s.hierarchyMode !== "nearby") return;
+    if (s.showAdvanced) this.slider(hierarchy, "Levels shown at rest", "Relative to the note’s shallowest heading. Deeper headings appear near your pointer.", "idleLevels", 1, 6, 1);
+    else this.normalChoice(hierarchy, "Levels shown at rest", "Deeper headings appear near your pointer.", "headingLevels", {
+      main: ["Main headings", { idleLevels: 1 }], two: ["Two levels", { idleLevels: 2 }], all: ["All levels", { idleLevels: 6 }],
+    });
+  }
+
+  renderColour(s) {
+    const colour = this.heading("Current heading colour");
+    this.dropdown(colour, "Colour", "", "colorMode", { neutral: "Neutral text", accent: "Theme accent", custom: "Custom colour" }, true);
+    if (s.colorMode === "custom") new Setting(colour).setName("Custom colour").addColorPicker(picker =>
+      picker.setValue(s.customColor).onChange(value => {
+        s.customColor = value; this.edited("customColor"); this.save(false);
+      }));
+  }
+
   /* ------------------------------------------------------------- display -- */
 
   display() {
@@ -1436,18 +1630,35 @@ class ScrollspySettingTab extends PluginSettingTab {
     if (previousPanel && this.displayedSection) {
       this.sectionScroll[this.displayedSection] = this.containerEl.scrollTop;
     }
+    const managerOpen = this.containerEl.querySelector(".scrollspy-preset-manager")?.open;
     this.hide();
     this.presetDrop = null;
     this.sectionEl = null;
     containerEl.empty();
     containerEl.addClass("scrollspy-settings");
 
+    const header = containerEl.createDiv({ cls: "scrollspy-settings-header" });
+    header.createEl("h2", { text: "Margin Rail" });
+    header.createEl("p", { text: "Your rail, with room to breathe." });
+    this.renderPresetPicker(header, s);
+    this.presetUpdateEl = header.createDiv({ cls: "scrollspy-preset-update" });
+    this.renderPresetUpdate();
+    const manager = containerEl.createEl("details", { cls: "scrollspy-preset-manager" });
+    manager.open = !!managerOpen;
+    manager.createEl("summary", { text: "Save as…" });
+    const presetBody = manager.createDiv();
+    this.sectionEl = presetBody;
+    this.renderPresets(s);
+    this.sectionEl = null;
     this.renderPreview();
-    const nav = containerEl.querySelector(".scrollspy-preview").createDiv({ cls: "scrollspy-nav" });
+    this.renderEditorMode();
+    const nav = containerEl.createDiv({ cls: "scrollspy-nav" });
     nav.setAttribute("role", "tablist");
-    const sections = { tracking: "Scroll tracking", appearance: "Rail & colour",
-      hover: "Pointer & motion", labels: "Labels", placement: "Placement", presets: "Presets" };
-    if (!sections[s.settingsSection]) s.settingsSection = "tracking";
+    const sections = { appearance: "Rail", tracking: "Behaviour", labels: "Labels", placement: "Placement" };
+    // Keep the user's previous section when upgrading the six-tab layout.
+    if (s.settingsSection === "hover") s.settingsSection = "tracking";
+    if (s.settingsSection === "presets") { manager.open = true; s.settingsSection = "appearance"; }
+    if (!sections[s.settingsSection]) s.settingsSection = "appearance";
     const panel = containerEl.createDiv({ cls: "scrollspy-panel" });
     panel.id = "scrollspy-settings-panel";
     panel.setAttribute("role", "tabpanel");
@@ -1475,12 +1686,10 @@ class ScrollspySettingTab extends PluginSettingTab {
     }
     panel.setAttribute("aria-labelledby", `scrollspy-tab-${s.settingsSection}`);
     this.sectionEl = panel;
-    if (s.settingsSection === "tracking") this.renderTracking(s);
+    if (s.settingsSection === "tracking") { this.renderTracking(s); this.renderPointer(s); }
     if (s.settingsSection === "appearance") this.renderAppearance(s);
-    if (s.settingsSection === "hover") this.renderPointer(s);
     if (s.settingsSection === "labels") this.renderLabels(s);
     if (s.settingsSection === "placement") this.renderPlacement(s);
-    if (s.settingsSection === "presets") this.renderPresets(s);
     this.displayedSection = s.settingsSection;
     containerEl.scrollTop = this.sectionScroll[s.settingsSection] || 0;
   }
@@ -1511,9 +1720,11 @@ class ScrollspySettingTab extends PluginSettingTab {
     const input = simulator.createEl("input", { type: "range" });
     input.min = "0"; input.max = "1000"; input.step = "1";
     input.setAttribute("aria-label", "Simulated scroll progress");
-    const allocations = simulator.createDiv({ cls: "scrollspy-allocations" });
+    const details = simulator.createEl("details", { cls: "scrollspy-simulation-details" });
+    details.createEl("summary", { text: "Tracking details" });
+    const allocations = details.createDiv({ cls: "scrollspy-allocations" });
     allocations.setAttribute("aria-label", "Heading shares of scroll progress");
-    const note = simulator.createDiv({ cls: "setting-item-description" });
+    const note = details.createDiv({ cls: "setting-item-description" });
     this.updateSimulation = () => {
       if (!this.preview) return;
       const progress = this.preview.progress;
@@ -1549,38 +1760,34 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
   choices(parent, name, desc, key, options) {
-    const row = new Setting(parent).setName(name).setDesc(desc);
-    row.settingEl.addClass("scrollspy-choice-setting");
-    const group = row.controlEl.createDiv({ cls: "scrollspy-choices" });
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-label", name);
-    for (const [value, [title, detail]] of Object.entries(options)) {
-      const button = group.createEl("button", { cls: this.plugin.settings[key] === value ? "is-selected" : "" });
-      button.setAttribute("aria-pressed", String(this.plugin.settings[key] === value));
-      button.dataset.setting = key;
-      button.dataset.value = value;
-      button.createEl("strong", { text: title });
-      button.createEl("span", { text: detail });
-      button.addEventListener("click", () => {
+    const labels = Object.fromEntries(Object.entries(options).map(([value, [title]]) => [value, title]));
+    const row = new Setting(parent).setName(name);
+    const describe = () => options[this.plugin.settings[key]]?.[1] || desc;
+    row.setDesc(describe()).addDropdown(drop => {
+      drop.selectEl.dataset.setting = key;
+      return drop.addOptions(labels).setValue(this.plugin.settings[key]).onChange(value => {
         this.plugin.settings[key] = value;
         this.edited(key);
         this.save(true);
-        const replacement = Array.from(this.containerEl.querySelectorAll("button[data-setting]"))
-          .find(item => item.dataset.setting === key && item.dataset.value === value);
-        if (replacement) replacement.focus({ preventScroll: true });
+        this.containerEl.querySelector(`select[data-setting="${key}"]`)?.focus({ preventScroll: true });
       });
-    }
+    });
   }
 
   renderTracking(s) {
-    const box = this.heading("How scrolling chooses a heading", "Choose the rule first, then decide how the rail highlights it.");
+    const box = this.heading("Scroll tracking");
     this.choices(box, "Tracking rule", "Try each rule with the slider above.", "trackingMode", {
       position: ["Follow the note", "Current when its heading reaches the top."],
       length: ["By section length", "Longer sections get more scroll time. Every heading gets a turn."],
       equal: ["Equal shares", "Every heading gets the same scroll time."],
       off: ["No tracking", "Keep the rail for navigation without a current marker."],
     });
-    this.toggle(box, "Show progress within the section", "The current bar fills as you move through its section. Allocation rules use that heading’s scroll share; Follow the note uses source lines.", "showSectionProgress", false);
+    this.toggle(box, "Show progress within the section", "The current bar fills as you move through its section. Allocation rules use that heading’s scroll share; Follow the note uses source lines.", "showSectionProgress", true);
+    if (s.showSectionProgress) this.choices(box, "Fill direction", "How progress grows inside the current mark.", "progressDirection", {
+      left: ["Left to right", "Start at the left end."],
+      right: ["Right to left", "Start at the right end."],
+      center: ["From centre", "Grow outward in both directions."],
+    });
     this.toggle(box, "Finish on the last heading", "At the bottom of a scrollable note, make the final heading current. Works with every rule, including no tracking.", "lastAtBottom", false);
     if (s.trackingMode !== "off") this.choices(box, "Highlight", "The chosen heading still determines which sections count as passed.", "activeMode", {
       single: ["Current heading", "Highlight the one chosen by your tracking rule."],
@@ -1589,10 +1796,7 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
 
-  renderPresets(s) {
-    const box = this.heading("Preset");
-    const saved = this.currentPreset();
-
+  renderPresetPicker(parent, s) {
     const options = {};
     for (const preset of BUILTIN_PRESETS) options[preset.id] = preset.name + (preset.id === "default" ? " (default)" : "");
     for (const preset of s.presets) options[preset.id] = preset.name +
@@ -1600,9 +1804,9 @@ class ScrollspySettingTab extends PluginSettingTab {
     const builtin = BUILTIN_PRESETS.find(preset => preset.id === s.activePreset);
     if (s.activePreset === "custom") options.custom = "Custom (unsaved)";
 
-    new Setting(box)
-      .setName("Active preset")
-      .setDesc(builtin ? builtin.description : "Switching replaces appearance and behaviour across every section.")
+    new Setting(parent)
+      .setName("Preset")
+      .setDesc(builtin ? builtin.description : "Appearance and behaviour from every section.")
       .addDropdown((drop) => {
         this.presetDrop = drop;
         return drop
@@ -1612,11 +1816,99 @@ class ScrollspySettingTab extends PluginSettingTab {
             const preset = BUILTIN_PRESETS.find(item => item.id === value) ||
               s.presets.find(item => item.id === value);
             if (preset) Object.assign(s, DEFAULTS, preset.values);
+            if (s.labelMoveMotion === "fade") s.labelMoveMotion = "none";
             s.activePreset = value;
+            if (value !== "custom") s.sourcePresetId = value;
+            this.updateTargetId = s.sourcePresetId;
             this.save(true);
           });
       });
+    const manage = parent.createEl("button", { cls: "scrollspy-preset-menu", text: "…", type: "button" });
+    manage.setAttribute("aria-label", "Preset options");
+    manage.setAttribute("aria-haspopup", "menu");
+    manage.addEventListener("click", event => {
+      const menu = new Menu();
+      menu.addItem(item => item.setTitle("Reset to v2").onClick(() => {
+        Object.assign(s, DEFAULTS);
+        s.activePreset = "default"; s.sourcePresetId = null; this.updateTargetId = null;
+        this.save(true);
+      }));
+      const saved = s.presets.find(preset => preset.id === (s.activePreset === "custom" ? s.sourcePresetId : s.activePreset));
+      if (saved) menu.addItem(item => item.setTitle(`Delete “${saved.name}”`).onClick(() => {
+        s.presets = s.presets.filter(preset => preset.id !== saved.id);
+        if (s.activePreset === saved.id) s.activePreset = "custom";
+        if (s.sourcePresetId === saved.id) s.sourcePresetId = null;
+        this.updateTargetId = null;
+        this.save(true);
+      }));
+      menu.showAtMouseEvent(event);
+    });
 
+  }
+
+  updatePreset() {
+    const s = this.plugin.settings;
+    const source = s.activePreset === "custom" ? s.sourcePresetId : s.activePreset;
+    const id = this.updateTargetId || source;
+    const builtin = BUILTIN_PRESETS.find(item => item.id === id);
+    // Only copies explicitly created from this built-in can be reused.
+    // Names are user-editable labels and cannot identify an update target.
+    return s.presets.find(item => item.id === id) ||
+      (builtin && s.presets.find(item => item.originBuiltinId === builtin.id)) || builtin || null;
+  }
+
+  renderPresetUpdate() {
+    const group = this.presetUpdateEl;
+    group.empty();
+    const saved = this.updatePreset();
+    group.hidden = this.plugin.settings.activePreset !== "custom" || (!saved && !this.plugin.settings.presets.length);
+    if (group.hidden) return;
+    const update = group.createEl("button", { text: "Update", type: "button" });
+    update.disabled = !saved;
+    update.setAttribute("aria-label", saved ? `Update preset “${saved.name}”` : "Update preset");
+    update.addEventListener("click", () => {
+      let target = this.updatePreset();
+      if (!target) return;
+      if (!this.plugin.settings.presets.includes(target)) {
+        target = { id: `user-${Date.now().toString(36)}`, name: target.name,
+          originBuiltinId: target.id, values: {} };
+        this.plugin.settings.presets.push(target);
+      }
+      target.values = this.capture();
+      this.plugin.settings.activePreset = target.id;
+      this.plugin.settings.sourcePresetId = target.id;
+      this.updateTargetId = target.id;
+      new Notice(`Updated “${target.name}”.`);
+      this.save(true);
+      this.presetDrop?.selectEl.focus({ preventScroll: true });
+    });
+    const destinations = [...this.plugin.settings.presets];
+    if (saved && !destinations.includes(saved)) destinations.unshift(saved);
+    if (saved && destinations.length === 1) {
+      group.createSpan({ cls: "scrollspy-update-target" }).createSpan({ text: saved.name });
+      return;
+    }
+    const picker = group.createEl("button", { cls: "scrollspy-update-target", type: "button" });
+    picker.createSpan({ text: saved ? saved.name : "Choose preset" });
+    setIcon(picker.createSpan({ cls: "scrollspy-update-chevron" }), "chevron-down");
+    picker.setAttribute("aria-label", saved ? `Choose preset to update; currently “${saved.name}”` : "Choose preset to update");
+    picker.setAttribute("aria-haspopup", "menu");
+    picker.addEventListener("click", event => {
+      const menu = new Menu();
+      for (const preset of destinations) {
+        menu.addItem(item => item.setTitle(preset.name).setChecked(preset.id === saved?.id).onClick(() => {
+          // Choosing a destination never loads it over the current edits.
+          this.updateTargetId = preset.id;
+          this.display();
+          this.presetUpdateEl.querySelector("[aria-haspopup]")?.focus({ preventScroll: true });
+        }));
+      }
+      menu.showAtMouseEvent(event);
+    });
+  }
+
+  renderPresets(s) {
+    const box = this.sectionEl || this.containerEl;
     new Setting(box)
       .setName("Save current settings")
       .setDesc("Stores appearance and behaviour from every section under a name.")
@@ -1641,56 +1933,25 @@ class ScrollspySettingTab extends PluginSettingTab {
             const id = `user-${Date.now().toString(36)}`;
             s.presets.push({ id, name, values: this.capture() });
             s.activePreset = id;
+            s.sourcePresetId = id;
+            this.updateTargetId = id;
             this.draftName = "";
             new Notice(`Saved preset “${name}”.`);
             this.save(true);
           })
       );
 
-    new Setting(box).setName("Restore v1 defaults")
-      .setDesc("Reset appearance and tracking. Your saved presets stay available.")
-      .addButton(button => button.setButtonText("Reset to v1").onClick(() => {
-        Object.assign(s, DEFAULTS); s.activePreset = "default"; this.save(true);
-      }));
-
-    if (!saved) return;
-
-    new Setting(box)
-      .setName(`“${saved.name}”`)
-      .setDesc("Overwrite it with the current settings, or remove it.")
-      .addButton((button) =>
-        button.setButtonText("Update").onClick(() => {
-          saved.values = this.capture();
-          new Notice(`Updated “${saved.name}”.`);
-          this.save(true);
-        })
-      )
-      .addButton((button) =>
-        button
-          .setButtonText("Delete")
-          .setWarning()
-          .onClick(() => {
-            s.presets = s.presets.filter((item) => item.id !== saved.id);
-            s.activePreset = "custom";
-            this.save(true);
-          })
-      );
   }
 
   renderAppearance(s) {
-    const hierarchy = this.heading("Heading hierarchy");
-    this.choices(hierarchy, "Which headings to show", "The current heading stays visible in either mode.", "hierarchyMode", {
-      all: ["All headings", "Keep every heading visible."],
-      nearby: ["Reveal nearby", "Hover a heading to reveal the deeper headings in its branch."],
-    });
-    if (s.hierarchyMode === "nearby") this.slider(hierarchy, "Levels shown at rest", "Relative to the note’s shallowest heading. Deeper headings appear near your pointer.", "idleLevels", 1, 6, 1);
-    const bars = this.heading("Bar shape", "Set the resting shape; each state below can add length and change visibility.");
+    if (!s.showAdvanced) { this.renderNormalAppearance(s); return; }
+    const bars = this.heading("Shape");
     this.slider(bars, "Length", "", "tickWidth", 4, 60, 1, "px");
     this.slider(bars, "Thickness", "", "tickHeight", 1, 14, 1, "px");
     this.slider(bars, "Corner radius", "", "tickRadius", 0, 7, 0.5, "px");
-    this.slider(bars, "Space between bars", "", "tickGap", 0, 24, 1, "px");
+    this.slider(bars, "Spacing", "", "tickGap", 0, 24, 1, "px");
     this.slider(bars, "Indent per heading level", "Shorten nested headings. Zero gives every level the same length.", "levelIndent", 0, 12, 1, "px");
-    const states = this.heading("Visibility by state");
+    const states = this.heading("Visibility");
     this.slider(states, "Idle", "Headings ahead of you.", "idleOpacity", 0.05, 1, 0.05);
     this.slider(states, "Pointer nearby", "Visibility of the whole rail while you point at it. The pointed bar stays fully visible.", "hoverOpacity", 0.05, 1, 0.05);
     this.slider(states, "Current", "Headings highlighted by your tracking rule.", "activeOpacity", 0.05, 1, 0.05);
@@ -1700,20 +1961,35 @@ class ScrollspySettingTab extends PluginSettingTab {
       this.slider(states, "Passed visibility", "Lower values fade passed sections.", "passedOpacity", 0.05, 1, 0.05);
       this.slider(states, "Extra length when passed", "Zero keeps their resting length.", "passedBoost", 0, 40, 1, "px");
     }
-    const colour = this.heading("Current heading colour");
-    this.dropdown(colour, "Colour", "", "colorMode", { neutral: "Neutral text", accent: "Theme accent", custom: "Custom colour" }, true);
-    if (s.colorMode === "custom") new Setting(colour).setName("Custom colour").addColorPicker(picker =>
-      picker.setValue(s.customColor).onChange(value => {
-        s.customColor = value; this.edited("customColor"); this.save(false);
-      }));
+    this.renderMarkAlignment(bars);
+    this.renderHeadingChoices(s);
+    this.renderColour(s);
   }
 
   renderPointer(s) {
     const box = this.heading("Pointer response");
     this.toggle(box, "Drag to scrub", "Hold and drag along the rail to scroll continuously from top to bottom. A click still jumps to a heading.", "dragToScrub", false);
+    if (!s.showAdvanced) {
+      this.normalChoice(box, "On hover", "Choose how marks respond to your pointer.", "hoverResponse", {
+        none: ["Still", { hoverStyle: "none" }],
+        wave: ["Swell", { hoverStyle: "wave", waveBoost: 30, waveReach: 60, waveFocus: 3 }],
+        pill: ["Heading badge", { hoverStyle: "pill", expandWidth: 30, expandHeight: 16, showLevel: true }],
+        focus: ["Focus", { hoverStyle: "focus" }],
+        dot: ["Dot", { hoverStyle: "dot", expandHeight: 10 }],
+      });
+      this.normalChoice(box, "Pointer area", "Invisible padding on each side; wider is easier to hit.", "pointerArea", {
+        narrow: ["Narrow", { hitbox: 16 }], standard: ["Standard", { hitbox: 36 }], wide: ["Wide", { hitbox: 60 }],
+      });
+      this.normalChoice(box, "Motion", "How quickly hover effects respond.", "motion", {
+        instant: ["Instant", { animDuration: 0 }], quick: ["Quick", { animDuration: 120 }], smooth: ["Smooth", { animDuration: 220 }], relaxed: ["Relaxed", { animDuration: 400 }],
+      });
+      return;
+    }
     this.choices(box, "On hover", "Choose an effect, then tune it below.", "hoverStyle", {
       wave: ["Swell", "Nearby bars grow toward your pointer."],
-      pill: ["Pill", "The pointed bar opens into a rounded pill."],
+      pill: ["Heading badge", "The pointed mark opens into a rounded heading badge."],
+      focus: ["Focus", "Frame the pointed mark and dim surrounding marks. The current heading stays visible."],
+      dot: ["Dot", "The pointed mark becomes a small circle."],
       none: ["Still", "Highlight and labels without growing bars."],
     });
     this.slider(box, "Pointer area", "Invisible padding on each side of the rail. Wider is easier to hit.", "hitbox", 0, 120, 2, "px");
@@ -1723,6 +1999,7 @@ class ScrollspySettingTab extends PluginSettingTab {
       this.slider(box, "Distance of the swell", "How far neighbours react on either side.", "waveReach", 10, 240, 5, "px");
       this.slider(box, "Focus", "Low spreads growth; high concentrates it on the nearest bar.", "waveFocus", 1, 8, 0.5);
     }
+    if (s.hoverStyle === "dot") this.slider(box, "Dot diameter", "Size of the circle on hover.", "expandHeight", 8, 32, 1, "px");
     if (s.hoverStyle === "pill") {
       this.slider(box, "Opened length", "", "expandWidth", 12, 80, 1, "px");
       this.slider(box, "Opened thickness", "", "expandHeight", 8, 32, 1, "px");
@@ -1743,8 +2020,32 @@ class ScrollspySettingTab extends PluginSettingTab {
 
     if (!s.showLabels) return;
 
+    this.choices(box, "Show and hide", "How the label appears and disappears. Independent of moving between marks.", "labelMotion", {
+      none: ["None", "Show and hide instantly."],
+      fade: ["Fade", "Fade in and out without moving."],
+      slide: ["Slide", "Fade and slide gently away from the rail."],
+    });
+    if (s.labelMotion !== "none") {
+      if (s.showAdvanced) this.slider(box, "Show and hide duration", "Independent of movement between marks.", "labelDuration", 0, 800, 20, "ms");
+      else this.normalChoice(box, "Show and hide speed", "", "labelSpeed", {
+        quick: ["Quick", { labelDuration: 120 }], smooth: ["Smooth", { labelDuration: 220 }], relaxed: ["Relaxed", { labelDuration: 400 }],
+      });
+    }
+    this.choices(box, "Between marks", "How a visible label changes as you move to another heading.", "labelMoveMotion", {
+      none: ["None", "Jump straight to the next heading."],
+      slide: ["Slide", "Glide to the next heading."],
+    });
+    if (s.labelMoveMotion !== "none") {
+      if (s.showAdvanced) this.slider(box, "Between marks duration", "Time to glide to the next heading.", "labelMoveDuration", 0, 800, 20, "ms");
+      else this.normalChoice(box, "Between marks speed", "", "labelMoveSpeed", {
+        quick: ["Quick", { labelMoveDuration: 120 }], smooth: ["Smooth", { labelMoveDuration: 220 }], relaxed: ["Relaxed", { labelMoveDuration: 400 }],
+      });
+    }
     this.toggle(box, "Quick bookmark button", "Add or remove a heading bookmark from its hover label. Bookmarked headings have a dot beside their tick. Preview clicks only change the sample.", "showBookmarkButton", false);
-    this.slider(box, "Label distance", "Space between the rail and label.", "labelOffset", 0, 40, 1, "px");
+    if (s.showAdvanced) this.slider(box, "Label distance", "Space between the rail and label.", "labelOffset", 0, 40, 1, "px");
+    else this.normalChoice(box, "Label distance", "", "labelDistance", {
+      close: ["Close", { labelOffset: 4 }], standard: ["Standard", { labelOffset: 10 }], far: ["Further", { labelOffset: 20 }],
+    });
     this.toggle(
       box,
       "Show how far into the note",
@@ -1759,7 +2060,10 @@ class ScrollspySettingTab extends PluginSettingTab {
       "showPreview",
       true
     );
-    if (s.showPreview) {
+    if (s.showPreview && !s.showAdvanced) this.normalChoice(box, "Excerpt length", "", "excerptLength", {
+      brief: ["Brief", { previewLength: 60 }], standard: ["Standard", { previewLength: 120 }], longer: ["Longer", { previewLength: 240 }],
+    });
+    if (s.showPreview && s.showAdvanced) {
       this.slider(
         box,
         "How much text",
@@ -1776,16 +2080,28 @@ class ScrollspySettingTab extends PluginSettingTab {
     const box = this.heading("Position in the note");
     this.dropdown(box, "Side", "", "side", { left: "Left", right: "Right" }, false);
     this.dropdown(box, "Vertical anchor", "", "anchor", { top: "Top", middle: "Middle", bottom: "Bottom" }, false);
-    this.slider(box, "Distance from the edge", "", "edgeOffset", 0, 80, 1, "px");
-    this.slider(box, "Nudge up or down", "", "axisOffset", -300, 300, 2, "px");
+    if (s.showAdvanced) this.slider(box, "Distance from the edge", "", "edgeOffset", 0, 80, 1, "px");
+    else this.normalChoice(box, "Edge inset", "", "edgeInset", {
+      flush: ["Flush", { edgeOffset: 0 }], standard: ["Slightly inset", { edgeOffset: 12 }], inset: ["Inset", { edgeOffset: 24 }],
+    });
+    if (s.showAdvanced) this.slider(box, "Nudge up or down", "", "axisOffset", -300, 300, 2, "px");
+    if (!s.showAdvanced) this.normalChoice(box, "Vertical offset", "Relative to the anchor.", "verticalOffset", {
+      up: ["Up a little", { axisOffset: -40 }], none: ["None", { axisOffset: 0 }], down: ["Down a little", { axisOffset: 40 }],
+    });
     const hide = this.heading("When to show the rail");
-    this.slider(hide, "Minimum headings", "Notes with fewer headings get no rail.", "minHeadings", 1, 10, 1);
+    if (s.showAdvanced) this.slider(hide, "Minimum headings", "Notes with fewer headings get no rail.", "minHeadings", 1, 10, 1);
+    else this.normalChoice(hide, "Minimum headings", "Hide the rail in shorter notes.", "minimumHeadings", {
+      one: ["1", { minHeadings: 1 }], four: ["4", { minHeadings: 4 }], six: ["6", { minHeadings: 6 }],
+    });
     this.choices(hide, "On phones", "A separate device preference. Presets keep your choice; the settings preview stays available.", "phoneVisibility", {
       hidden: ["Hide on phones", "Keep the small screen clear."],
       landscape: ["Landscape only", "Show the rail when the phone is sideways."],
       always: ["Show on phones", "Show in portrait and landscape."],
     });
-    this.slider(hide, "Minimum pane width", "For desktops and tablets. Phone visibility is controlled above. Zero shows it at any width.", "hideBelowWidth", 0, 1200, 20, "px");
+    if (s.showAdvanced) this.slider(hide, "Minimum pane width", "For desktops and tablets. Phone visibility is controlled above. Zero shows it at any width.", "hideBelowWidth", 0, 1200, 20, "px");
+    else this.normalChoice(hide, "Pane width", "Hide the rail when there is little room.", "paneWidth", {
+      any: ["Any width", { hideBelowWidth: 0 }], standard: ["At least 500px", { hideBelowWidth: 500 }], wide: ["At least 700px", { hideBelowWidth: 700 }],
+    });
   }
 
 }
@@ -1802,10 +2118,13 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
       await this.loadData()
     );
 
-    // Promote the original saved v1 when it still matches the new built-in.
+    // Between-marks Fade was removed; keep those configurations usable.
+    if (this.settings.labelMoveMotion === "fade") this.settings.labelMoveMotion = "none";
+
+    // Promote the saved v2 when it still matches the new built-in.
     // Keep the saved copy, and leave any later customizations untouched.
     const selected = this.settings.presets.find(preset => preset.id === this.settings.activePreset);
-    if (selected?.name === "v1" && PRESET_KEYS.every(key => this.settings[key] === DEFAULTS[key])) {
+    if (selected?.name === "v2" && PRESET_KEYS.every(key => this.settings[key] === DEFAULTS[key])) {
       this.settings.activePreset = "default";
       await this.saveData(this.settings);
     }
@@ -1904,6 +2223,7 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
       "--ss-idle-opacity": String(s.idleOpacity),
       "--ss-hover-opacity": String(s.hoverOpacity),
       "--ss-label-offset": `${s.labelOffset}px`,
+      "--ss-label-duration": `${s.labelDuration ?? 120}ms`,
       "--ss-active-color": active,
     };
 
@@ -1942,3 +2262,5 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
     }
   }
 };
+
+/* nosourcemap */

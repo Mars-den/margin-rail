@@ -36,6 +36,7 @@ const root = path.resolve(__dirname, '../..');
         activate(i) { window.jumped = i; }
         scrubTo(p) { window.scrubbed = p; }
         bookmarkState() { return {available: true, saved: false}; }
+        async bookmarkHeading(index) { window.bookmarkedIndex = index; }
       }
       window.rail = new TestRail({ settings, applyStyles: module.exports.prototype.applyStyles }, document.querySelector('#host'));
       rail.render(Array.from({ length: 200 }, (_, i) => i % 6 + 1));
@@ -103,7 +104,7 @@ const root = path.resolve(__dirname, '../..');
     assert.ok(await page.evaluate(() => scrubbed > .98));
 
     // Nested headings stay folded at rest and are all keyboard reachable.
-    await page.evaluate(() => { rail.settings.hierarchyMode = 'nearby'; rail.settings.showLabels = false; rail.render([1, 2, 3, 4, 5, 6]); });
+    await page.evaluate(() => { rail.settings.hierarchyMode = 'nearby'; rail.settings.idleLevels = 2; rail.settings.showLabels = false; rail.render([1, 2, 3, 4, 5, 6]); });
     assert.equal(await page.evaluate(() => rail.el.children[5].hidden), true);
     await page.locator('#before').focus(); await page.keyboard.press('Tab'); await page.keyboard.press('End');
     assert.equal(await page.evaluate(() => rail.keyboardIndex === 5 && !rail.el.children[5].hidden), true);
@@ -145,6 +146,23 @@ const root = path.resolve(__dirname, '../..');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement === rail.flyoutBookmark), true);
+    // A real click focuses the button before its handler runs. Disabling it
+    // must not erase the selected heading via focusout before the write.
+    await page.locator('.scrollspy-bookmark-button').click();
+    assert.equal(await page.evaluate(() => window.bookmarkedIndex), 1);
+    assert.equal(await page.evaluate(()=>rail.flyout.classList.contains('is-visible')),true,'Bookmark click leaves the label open while pointed at');
+    await page.mouse.move(950,650);
+    await page.waitForFunction(()=>!rail.flyout.classList.contains('is-visible'));
+    assert.equal(await page.evaluate(()=>rail.keyboardFocused),false,'Pointer departure clears retained keyboard selection');
+    await page.locator('#before').focus();await page.keyboard.press('Tab');await page.keyboard.press('ArrowDown');await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(()=>rail.flyout.classList.contains('is-visible')),true,'Keyboard activation keeps its focused label available');
+    await page.locator('.scrollspy-bookmark-button').click();
+    await page.mouse.move(950,650);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(()=>rail.flyout.classList.contains('is-visible')),true,'Resuming keyboard use cancels a pending pointer departure');
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.activeElement === rail.el && rail.keyboardIndex === -1), true);
     // The settings sample has uneven branches. Crossing them repeatedly must
@@ -170,6 +188,129 @@ const root = path.resolve(__dirname, '../..');
       assert.ok(Math.abs(first.get(index) - top) < 0.5, `Hover moved branch ${index} from ${first.get(index)} to ${top}`);
     }
     assert.equal(placements.shiftAfterLeave, '');
+    // Unequal marks align independently of the rail's attachment side.
+    await page.evaluate(() => {
+      Object.assign(rail.settings, { hierarchyMode: 'all', tickWidth: 36, tickHeight: 4,
+        levelIndent: 8, hoverStyle: 'none', activeBoost: 0, showSectionProgress: true });
+      rail.activeIndex = 0; rail.render([1,2,3]); rail.paintActive(new Set([0]), 0); rail.paintProgress(0.25);
+    });
+    for (const side of ['left','right']) {
+      for (const alignment of ['left','center','right']) {
+        const coordinates=await page.evaluate(({side,alignment})=>{
+          Object.assign(rail.settings,{side,markAlignment:alignment});rail.updatePresentation();
+          return [...rail.el.querySelectorAll('.scrollspy-mark')].map(mark=>{
+            const box=mark.getBoundingClientRect();
+            return alignment==='center'?(box.left+box.right)/2:box[alignment];
+          });
+        },{side,alignment});
+        assert.ok(Math.max(...coordinates)-Math.min(...coordinates)<0.5,`${side} rail / ${alignment} marks: ${coordinates}`);
+      }
+    }
+    for (const direction of ['left','right','center']) {
+      const fill=await page.evaluate(direction=>{
+        rail.settings.progressDirection=direction;rail.updatePresentation();
+        const mark=rail.el.querySelector('.is-current .scrollspy-mark');
+        const css=getComputedStyle(mark,'::before');
+        return {width:parseFloat(css.width),markWidth:mark.getBoundingClientRect().width,left:css.left,right:css.right,transform:css.transform};
+      },direction);
+      assert.ok(Math.abs(fill.width-fill.markWidth/4)<0.5,`${direction} keeps the progress fraction`);
+      if(direction==='left')assert.equal(parseFloat(fill.left),0);
+      if(direction==='right')assert.equal(parseFloat(fill.right),0);
+      if(direction==='center'){
+        assert.ok(Math.abs(parseFloat(fill.left)-fill.markWidth/2)<0.5);
+        assert.notEqual(fill.transform,'none');
+      }
+    }
+    await page.evaluate(()=>{
+      Object.assign(rail.settings,{hoverStyle:'focus',animDuration:0});rail.updateSettings();
+      rail.paintActive(new Set([0]),0);rail.setHovered(1);
+    });
+    await page.waitForTimeout(150);
+    const focused=await page.evaluate(()=>[...rail.el.querySelectorAll('.scrollspy-mark')].map(mark=>{
+      const css=getComputedStyle(mark);return {opacity:Number(css.opacity),outline:css.outlineStyle};
+    }));
+    assert.equal(focused[0].opacity,1,'Focus preserves the current heading');
+    assert.equal(focused[1].opacity,1);
+    assert.equal(focused[1].outline,'solid');
+    assert.ok(focused[2].opacity<0.15,'Focus dims neighbours');
+    await page.evaluate(()=>rail.onLeave());
+    assert.equal(await page.locator('.scrollspy-rail').evaluate(el=>el.classList.contains('is-pointing')),false);
+    await page.evaluate(()=>{
+      Object.assign(rail.settings,{hoverStyle:'dot',expandHeight:14});rail.updateSettings();
+      rail.keyboardFocused=true;rail.selectKeyboard(1);
+    });
+    const dot=await page.locator('.is-hover .scrollspy-mark').evaluate(mark=>{
+      const box=mark.getBoundingClientRect();return {width:box.width,height:box.height,radius:getComputedStyle(mark).borderRadius};
+    });
+    assert.equal(dot.width,14);assert.equal(dot.height,14);assert.equal(dot.radius,'50%');
+    assert.equal(await page.locator('.scrollspy-level').count(),0,'Dot has no heading badge text');
+    await page.evaluate(()=>rail.dismissKeyboard());
+    assert.equal(await page.locator('.scrollspy-rail').evaluate(el=>el.classList.contains('is-pointing')),false);
+    assert.equal(await page.locator('.is-hover').count(),0,'Dismissal restores resting marks');
+    await page.evaluate(()=>{
+      rail.settings.hoverStyle='none';rail.updateSettings();
+    });
+    assert.equal(await page.locator('.hover-focus,.hover-dot').count(),0,'Switching styles clears effect classes');
+    // Label motion has independent timing and remains immediately focusable.
+    for(const side of ['left','right']) {
+      const hidden=await page.evaluate(side=>{
+        Object.assign(rail.settings,{side,labelMotion:'slide',labelDuration:0,showBookmarkButton:true});rail.updateSettings();rail.hideFlyout();
+        return getComputedStyle(rail.flyout).transform;
+      },side);
+      assert.match(hidden,new RegExp(`, ${side==='left'?'-6':'6'},`),'Hidden slide starts toward the rail');
+    }
+    const opening=await page.evaluate(()=>{
+      rail.settings.labelDuration=400;rail.plugin.applyStyles(rail);rail.showFlyout(1);
+      rail.flyoutBookmark.focus();
+      const css=getComputedStyle(rail.flyout);
+      return {visibility:css.visibility,duration:css.transitionDuration,properties:css.transitionProperty,focused:document.activeElement===rail.flyoutBookmark};
+    });
+    assert.equal(opening.visibility,'visible');assert.equal(opening.focused,true);
+    assert.match(opening.duration,/0.4s/);assert.match(opening.properties,/transform/);
+    await page.waitForFunction(()=>Number(getComputedStyle(rail.flyout).opacity)===1);
+    const restingTransform=await page.evaluate(()=>getComputedStyle(rail.flyout).transform);
+    assert.match(restingTransform,/, 0,/,'Open label has no horizontal offset');
+    await page.evaluate(()=>rail.hideFlyout());
+    await page.waitForFunction(()=>getComputedStyle(rail.flyout).visibility==='hidden');
+    await page.evaluate(()=>{rail.settings.labelMotion='none';rail.updateSettings();rail.showFlyout(1);});
+    assert.equal(await page.evaluate(()=>getComputedStyle(rail.flyout).transitionDuration),'0s');
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.evaluate(()=>{rail.settings.labelMotion='slide';rail.updateSettings();rail.showFlyout(1);});
+    assert.equal(await page.evaluate(()=>getComputedStyle(rail.flyout).transitionDuration),'0s');
+    assert.match(await page.evaluate(()=>getComputedStyle(rail.flyout).transform),/, 0,/,'Reduced motion disables horizontal slide');
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    await page.evaluate(()=>{
+      Object.assign(rail.settings,{labelMotion:'none',labelMoveMotion:'slide',labelMoveDuration:400});
+      rail.updateSettings();rail.showFlyout(0);
+      rail.flyout.getBoundingClientRect();rail.showFlyout(2);
+    });
+    const moving=await page.evaluate(()=>({
+      top:parseFloat(getComputedStyle(rail.flyout).top),target:parseFloat(rail.flyout.style.top),
+      animations:rail.labelAnimations.length,index:rail.flyoutIndex,
+    }));
+    assert.equal(moving.index,2);assert.equal(moving.animations,1);
+    assert.ok(Math.abs(moving.top-moving.target)>1,'Between-marks Slide animates the position');
+    const retargeted=await page.evaluate(()=>{
+      const before=parseFloat(getComputedStyle(rail.flyout).top);const previous=rail.labelAnimations[0];
+      rail.showFlyout(1);
+      return {before,after:parseFloat(getComputedStyle(rail.flyout).top),oldState:previous.playState};
+    });
+    assert.ok(Math.abs(retargeted.before-retargeted.after)<1,'Rapid movement starts from the visible position');
+    assert.equal(retargeted.oldState,'idle');
+    const existing=await page.evaluate(()=>{
+      const animation=rail.labelAnimations[0];rail.showFlyout(1);return animation===rail.labelAnimations[0];
+    });
+    assert.equal(existing,true,'Refreshing the same heading does not restart motion');
+    await page.evaluate(()=>rail.hideFlyout());
+    assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0);
+    await page.evaluate(()=>{
+      rail.settings.labelMoveMotion='none';rail.showFlyout(0);rail.showFlyout(2);
+    });
+    assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0,'None switches between marks instantly');
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.evaluate(()=>{rail.settings.labelMoveMotion='slide';rail.hideFlyout();rail.showFlyout(0);rail.showFlyout(1);});
+    assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0,'Reduced motion disables between-mark effects');
+    await page.emulateMedia({reducedMotion:'no-preference'});
     if (process.env.RAIL_SCREENSHOT) {
       await page.evaluate(() => { rail.keyboardFocused = true; rail.selectKeyboard(30); });
       await page.waitForTimeout(160);

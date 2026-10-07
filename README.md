@@ -52,18 +52,38 @@ immediately in the live preview and your open notes. Start with a preset:
 
 | Preset | What it looks and feels like |
 |---|---|
-| **v1** · default | Slim bars that grow near your pointer, with heading previews and a bookmark button. |
+| **v2** · default | Slim bars that grow near your pointer, with heading previews and a bookmark button. |
+| **Absolutely** | Claude-inspired styling: fine, widely spaced marks on the left with simple labels. |
 | **Quiet** | A subtle rail with simple heading labels. |
 | **Outline** | Indented bars and heading-level labels to show your note’s structure. |
-| **Progress** | Each heading gets an equal share of scrolling, with a bar that fills as you move through it. |
+| **Progress** | Equal scroll shares, square marks with a hover swell, and section progress filling from right to left. |
 
-Save your own presets or adjust the bars, colours, hover effects, labels, and
-placement. Changes to a preset show as **Custom (unsaved)** until you save them.
+Use **Normal** for named choices for mark shape, length, spacing, emphasis, hover,
+labels, and placement. **Advanced** exposes individual sliders and exact numeric
+inputs. Both edit the same values: Normal shows a matching choice automatically,
+or **Custom** when the values do not match. Switching modes preserves your setup.
+
+Hover options include **Still**, **Swell**, **Heading badge**, **Focus** (frame the
+pointed mark and dim its neighbours), and **Dot** (morph the mark into a circle).
+Advanced lets you tune the badge and dot sizes. Labels have separate **Show and
+hide** (**None**, **Fade**, **Slide**) and **Between marks** (**None**, **Slide**)
+animations, with speed choices in Normal and exact durations in Advanced. Label
+animations respect reduced motion. Absolutely uses Slide for both; Progress
+keeps both off.
+
+Align marks to the left, centre, right, or the rail’s side. Section progress can
+fill from left to right, right to left, or outward from the centre.
+
+Use **Save as…** to name a new preset. The preset options menu holds reset and
+delete actions. Changes to a preset show as **Custom (unsaved)** until you save them.
+**Update** appears after edits and saves over the preset you started from; use its dropdown to choose
+another saved preset. Updating a built-in creates a local copy. If the starting
+preset is unknown or was deleted, choose a destination before updating.
 Your phone visibility choice stays the same when switching presets.
 
 ## How headings follow your scrolling
 
-Choose a rule under **Scroll tracking** and try it with the preview’s scroll slider.
+Choose a rule under **Behaviour → Scroll tracking** and try it with the preview’s scroll slider.
 
 | Setting | What happens |
 |---|---|
@@ -72,7 +92,7 @@ Choose a rule under **Scroll tracking** and try it with the preview’s scroll s
 | **Equal shares** | Every heading stays current for the same amount of scrolling. |
 | **No tracking** | Use the rail to navigate without highlighting a current heading. |
 
-**Follow the note** is the default for new installations. Existing saved choices
+**By section length** is the default for new installations. Existing saved choices
 are preserved. **By section length** counts lines of Markdown, including separate
 shares for nested headings, so resizing the window doesn’t change its allocation.
 

@@ -8,7 +8,7 @@ vm.runInContext(source + '\nmodule.exports = { DEFAULTS, RailView };', context);
 const { DEFAULTS, RailView } = context.module.exports;
 function fixture(levels) {
   const rail = Object.create(RailView.prototype);
-  rail.plugin = { settings: { ...DEFAULTS } };
+  rail.plugin = { settings: { ...DEFAULTS, idleLevels: 2 } };
   rail.levels = levels;
   rail.activeIndex = 0; rail.expandedBranch = -1;
   rail.keyboardIndex = -1; rail.keyboardFocused = false;

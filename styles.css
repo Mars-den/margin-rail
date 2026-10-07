@@ -210,14 +210,17 @@
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 120ms ease, visibility 120ms;
+  transition: opacity var(--ss-label-duration, 120ms) ease,
+    transform var(--ss-label-duration, 120ms) cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear var(--ss-label-duration, 120ms);
 }
 
 .scrollspy-flyout.is-visible {
   opacity: 1;
   visibility: visible;
   /* Make actions focusable immediately, even during a rapid keyboard Tab. */
-  transition-property: opacity;
+  transition-property: opacity, transform;
+  transition-delay: 0s;
 }
 
 .scrollspy-flyout .is-hidden {
@@ -271,6 +274,7 @@
 .scrollspy-settings .scrollspy-stage {
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
 
   height: 190px;
   margin-bottom: 6px;
@@ -356,6 +360,7 @@
   font-size: var(--font-ui-small);
 }
 .scrollspy-simulator { padding: 10px 2px 0; }
+.scrollspy-simulation-details > summary { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 8px; }
 .scrollspy-simulation-status {
   font-size: var(--font-ui-small);
   font-variant-numeric: tabular-nums;
@@ -381,51 +386,89 @@
 .scrollspy-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 0 16px;
+  gap: 22px;
+  padding: 0;
+  margin-bottom: 8px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-.scrollspy-nav button { box-shadow: none; font-size: var(--font-ui-small); }
-.scrollspy-nav button.is-selected,
-.scrollspy-choices button.is-selected {
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
+.scrollspy-settings .scrollspy-nav button {
+  height: auto;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+.scrollspy-settings .scrollspy-nav button[aria-selected="true"] {
+  border-bottom-color: var(--text-normal);
   color: var(--text-normal);
 }
-.scrollspy-settings .scrollspy-choice-setting { display: block; }
-.scrollspy-settings .scrollspy-choice-setting .setting-item-control { display: block; margin-top: 12px; }
-.scrollspy-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.scrollspy-choices button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  gap: 4px;
-  padding: 12px;
-  height: auto;
-  white-space: normal;
-  border: 1px solid var(--background-modifier-border);
-  box-shadow: none;
+.scrollspy-settings-header h2 { margin: 0 0 6px; }
+.scrollspy-settings-header p { margin: 0 0 18px; color: var(--text-muted); font-size: var(--font-ui-small); }
+.scrollspy-settings-header .setting-item { border-top: 0; padding: 10px 0; }
+.scrollspy-settings-header .setting-item { flex-wrap: wrap; }
+.scrollspy-settings-header .setting-item-info { min-width: 0; flex: 1 1 140px; }
+.scrollspy-settings-header .setting-item-control { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+/* Bypass DropdownComponent's cached fitted width, which can be measured while
+   settings are hidden. Outrank Obsidian's select.dropdown width rule. */
+.scrollspy-settings .scrollspy-settings-header .setting-item-control select.dropdown {
+  min-width: min(6em, 100%);
+  width: auto;
+  max-width: 100%;
+  text-overflow: ellipsis;
 }
-.scrollspy-choices strong { font-size: var(--font-ui-small); font-weight: 600; }
-.scrollspy-choices span { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.4; }
+.scrollspy-settings .setting-item-name { overflow-wrap: anywhere; }
+.scrollspy-preset-update { display: flex; justify-content: flex-end; margin: 4px 0 12px; }
+.scrollspy-preset-update[hidden] { display: none; }
+.scrollspy-preset-update > button,
+.scrollspy-preset-update > span.scrollspy-update-target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 32px;
+  margin: 0;
+  padding: 0 10px;
+  font-size: var(--font-ui-small);
+  line-height: 1.3;
+}
+.scrollspy-preset-update > button { flex-shrink: 0; box-shadow: none; min-height: 32px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s) 0 0 var(--radius-s); }
+.scrollspy-preset-update .scrollspy-update-target { display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; border: 1px solid var(--background-modifier-border); border-left: 0; border-radius: 0 var(--radius-s) var(--radius-s) 0; background: var(--background-secondary); }
+.scrollspy-update-target > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrollspy-update-chevron { display: flex; flex: 0 0 auto; }
+.scrollspy-update-chevron svg { width: 14px; height: 14px; }
+.scrollspy-preset-manager { margin: 0 0 18px; }
+.scrollspy-preset-manager > summary { color: var(--text-muted); font-size: var(--font-ui-small); cursor: pointer; }
+.scrollspy-preset-manager[open] > summary { margin-bottom: 10px; }
+.scrollspy-panel .setting-item { padding: 12px 0; gap: 18px; }
+.scrollspy-panel .setting-item.setting-item-heading { border-top: 0; padding: 22px 0 4px; }
+.scrollspy-panel .setting-item-heading:first-child { padding-top: 14px; }
+.scrollspy-panel .setting-item-description { font-size: var(--font-ui-smaller); line-height: 1.45; }
+.scrollspy-panel .setting-item-control { gap: 10px; }
+.scrollspy-panel input[type="range"] { width: 120px; min-width: 0; }
+.scrollspy-panel select { max-width: 220px; }
+.scrollspy-preview-disclosure > summary { margin-bottom: 10px; font-size: var(--font-ui-small); color: var(--text-muted); }
+.scrollspy-settings .scrollspy-stage { background: var(--background-secondary); border-radius: var(--radius-m); }
+.scrollspy-settings .scrollspy-readout { min-width: 3.2em; margin-right: 0; }
+@media (max-width: 600px) {
+  .scrollspy-nav { gap: 18px; }
+  .scrollspy-panel .setting-item { flex-wrap: wrap; }
+  .scrollspy-panel .setting-item-info { min-width: 140px; }
+  .scrollspy-panel .setting-item-control { margin-left: auto; }
+  .scrollspy-panel input[type="range"] { width: 100px; }
+  .scrollspy-panel select { max-width: 100%; }
+}
 .scrollspy-settings button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 @media (max-width: 600px) {
-  .scrollspy-choices { grid-template-columns: 1fr; }
   .scrollspy-settings .scrollspy-stage { height: 150px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scrollspy-mark, .scrollspy-level, .scrollspy-flyout { transition: none; }
 }
 
-/* Scope the states strongly enough to survive theme button styling. */
-.scrollspy-settings .scrollspy-nav button[aria-selected="true"] {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border: 1px solid var(--interactive-accent);
-  box-shadow: inset 0 -2px 0 var(--text-on-accent);
-}
-.scrollspy-settings .scrollspy-nav button { border-radius: 6px; }
 .scrollspy-settings .scrollspy-choices button { border-radius: 10px; }
 .scrollspy-settings .scrollspy-choices button[aria-pressed="true"] {
   border: 2px solid var(--interactive-accent);
@@ -532,3 +575,47 @@
 }
 .scrollspy-rail.is-right .scrollspy-tick.is-bookmarked::after { right: calc(100% + 5px); }
 .scrollspy-rail.is-left .scrollspy-tick.is-bookmarked::after { left: calc(100% + 5px); }
+
+/* Marks may share an edge or a centre independently of the rail's side. */
+.scrollspy-rail[data-mark-alignment="left"],
+.scrollspy-rail[data-mark-alignment="center"],
+.scrollspy-rail[data-mark-alignment="right"] { align-items: stretch; }
+.scrollspy-rail[data-mark-alignment="left"] .scrollspy-tick { justify-content: flex-start; }
+.scrollspy-rail[data-mark-alignment="center"] .scrollspy-tick { justify-content: center; }
+.scrollspy-rail[data-mark-alignment="right"] .scrollspy-tick { justify-content: flex-end; }
+.scrollspy-rail.has-section-progress[data-progress-direction="right"] .scrollspy-tick.is-current .scrollspy-mark::before { left: auto; right: 0; }
+.scrollspy-rail.has-section-progress[data-progress-direction="center"] .scrollspy-tick.is-current .scrollspy-mark::before { left: 50%; transform: translateX(-50%); }
+.scrollspy-editor-mode { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0 8px; }
+.scrollspy-editor-mode > span:first-child { margin-right: auto; color: var(--text-muted); font-size: var(--font-ui-small); }
+.scrollspy-mode-buttons { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-m); background: var(--background-secondary); }
+.scrollspy-mode-buttons button { border: 0; box-shadow: none; background: transparent; color: var(--text-muted); }
+.scrollspy-mode-buttons button[aria-pressed="true"] { background: var(--background-primary); color: var(--text-normal); box-shadow: 0 1px 3px #0002; }
+.scrollspy-settings .scrollspy-number { width: 5em; min-width: 0; }
+.scrollspy-settings-header { position: relative; }
+.scrollspy-settings .scrollspy-preset-menu { position: absolute; right: 0; top: 0; font-size: 20px; width: 32px; padding: 0; }
+.scrollspy-settings-header h2 { padding-right: 40px; }
+
+/* Focus uses the same nearest-heading state for mouse and keyboard. Keep the
+   current heading legible even when another mark is being inspected. */
+.scrollspy-rail.hover-focus.is-pointing .scrollspy-tick:not(.is-hover):not(.is-active) .scrollspy-mark {
+  opacity: calc(var(--ss-idle-opacity, 0.25) * 0.45);
+}
+.scrollspy-rail.hover-focus .scrollspy-tick.is-hover .scrollspy-mark {
+  outline: 1px solid var(--ss-active-color, var(--text-normal));
+  outline-offset: 3px;
+}
+.scrollspy-rail.hover-dot .scrollspy-tick.is-hover .scrollspy-mark {
+  width: var(--ss-expand-height, 10px);
+  height: var(--ss-expand-height, 10px);
+  border-radius: 50%;
+}
+
+/* Labels animate separately from marks. Sliding starts toward the rail; the
+   visible position stays fixed for bookmark clicks and keyboard navigation. */
+.scrollspy-flyout[data-label-motion="slide"].is-right { transform: translateY(-50%) translateX(6px); }
+.scrollspy-flyout[data-label-motion="slide"].is-left { transform: translateY(-50%) translateX(-6px); }
+.scrollspy-flyout[data-label-motion="slide"].is-visible { transform: translateY(-50%) translateX(0); }
+.scrollspy-flyout[data-label-motion="none"] { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .scrollspy-flyout[data-label-motion] { transition: none; transform: translateY(-50%); }
+}

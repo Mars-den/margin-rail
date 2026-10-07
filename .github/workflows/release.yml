@@ -15,6 +15,14 @@ jobs:
         with:
           node-version: '22'
       - run: node scripts/verify.cjs
+      - name: Install browser test runtime
+        run: |
+          npm install --no-save --package-lock=false playwright@1.62.1
+          npx --no-install playwright install --with-deps chromium
+      - name: Verify settings and navigation in Chromium
+        run: |
+          node tests/browser/settings.cjs
+          node tests/browser/navigation.cjs
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs: verify
