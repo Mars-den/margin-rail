@@ -34,7 +34,7 @@ highlighted bar shows where you are.
 
 - **Hover** over a bar to see its heading. Labels can also show a short text
   preview and how far down the note the heading is.
-- **Click** to jump to that heading.
+- **Click** to navigate to that mark using your selected tracking rule.
 - **Drag** up or down along the rail to scroll through the note.
 - **Scroll or swipe over the rail** to browse headings when the outline is taller than the pane.
 - **Keyboard**: Tab to the rail, use Up/Down or Home/End to select any heading,
@@ -91,6 +91,11 @@ Choose a rule under **Behaviour → Scroll tracking** and try it with the previe
 | **By section length** | Longer sections stay current for more of your scrolling. Every heading gets a turn. |
 | **Equal shares** | Every heading stays current for the same amount of scrolling. |
 | **No tracking** | Use the rail to navigate without highlighting a current heading. |
+
+With **By section length** or **Equal shares**, clicking a mark jumps into its
+assigned scroll share so that the clicked mark becomes current. Opening a heading
+bookmark from Obsidian, or following a heading link, uses that same allocation.
+**Follow the note** and **No tracking** keep Obsidian’s exact heading jumps.
 
 **By section length** is the default for new installations. Existing saved choices
 are preserved. **By section length** counts lines of Markdown, including separate

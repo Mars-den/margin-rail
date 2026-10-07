@@ -7,8 +7,8 @@
  * so the list is always complete even though both editors virtualise their DOM.
  * Scroll position comes from view.currentMode.getScroll(), which reports a line
  * number in BOTH reading mode and live preview -- that is the whole trick, and it
- * is why this needs no per-mode special casing. applyScroll() is its inverse, so
- * clicking a bar jumps in either mode too.
+ * is why this needs no per-mode special casing. Physical tracking uses
+ * applyScroll(); allocation tracking navigates to the same scroll share it paints.
  *
  * Bar length carries two things at once: heading level (a fixed indent per level)
  * and cursor proximity (a dock-style swell added on top). Both are widths, so they
@@ -37,6 +37,7 @@ const {
   setIcon,
   getIcon,
   Platform,
+  resolveSubpath,
 } = require("obsidian");
 
 // A heading counts as current once its line reaches just past the viewport top.
@@ -175,6 +176,14 @@ function headingAllocations(lines, totalLines, mode) {
     start = range.end;
     return range;
   });
+}
+
+// Navigation is the inverse of allocation-based tracking, shared by real
+// notes and the settings sample. Stay inside the range, away from boundaries.
+function headingNavigationProgress(lines, totalLines, mode, index) {
+  if ((mode !== "length" && mode !== "equal") || index < 0 || index >= lines.length) return null;
+  const range = headingAllocations(lines, totalLines, mode)[index];
+  return (range.start + range.end) / 2;
 }
 
 function resolveCurrent(lines, totalLines, settings, viewport) {
@@ -915,6 +924,7 @@ class DocumentRail extends RailView {
 
     this.scrollFrame = 0;
     this.onScroll = () => this.scheduleActive();
+    this.onNavigationInput = () => this.cancelHeadingNavigation();
 
     // Reevaluate both pane width and phone orientation when the pane resizes.
     this.resizeObserver = new ResizeObserver(() => {
@@ -925,6 +935,7 @@ class DocumentRail extends RailView {
   }
 
   destroy() {
+    this.cancelHeadingNavigation();
     this.sourceEpoch = (this.sourceEpoch || 0) + 1;
     this.bookmarksPlugin?.off?.("changed", this.onBookmarksChanged);
     this.detachScroller();
@@ -933,12 +944,60 @@ class DocumentRail extends RailView {
   }
 
   activate(index) {
+    this.cancelHeadingNavigation();
     const heading = this.headings[index];
     if (!heading) return;
+    const progress = headingNavigationProgress(this.headings.map(item => item.position.start.line),
+      this.lines.length, this.settings.trackingMode, index);
+    if (progress !== null && this.scroller) { this.scrubTo(progress); return; }
     const mode = this.view.currentMode;
     if (mode && typeof mode.applyScroll === "function") {
       mode.applyScroll(heading.position.start.line);
     }
+  }
+
+  cancelHeadingNavigation() {
+    this.pendingNavigation = null;
+    if (this.navigationFrame) this.navigationWindow.cancelAnimationFrame(this.navigationFrame);
+    this.navigationFrame = 0;
+  }
+
+  queueHeadingNavigation(line) {
+    this.cancelHeadingNavigation();
+    const request = this.pendingNavigation = { line, file: this.view.file, mode: this.view.currentMode, ready: false };
+    const win = this.navigationWindow = this.host.ownerDocument.defaultView;
+    const schedule = () => {
+      if (this.pendingNavigation !== request) return;
+      if (this.navigationFrame) win.cancelAnimationFrame(this.navigationFrame);
+      // Let Obsidian finish its own line jump and CodeMirror/rendered layout.
+      this.navigationFrame = win.requestAnimationFrame(() => {
+        this.navigationFrame = win.requestAnimationFrame(() => {
+          this.navigationFrame = 0;
+          if (this.pendingNavigation !== request) return;
+          request.ready = true;
+          this.applyPendingNavigation();
+        });
+      });
+    };
+    const renderer = this.view.currentMode?.renderer;
+    if (typeof renderer?.onRendered === "function") renderer.onRendered(schedule);
+    else schedule();
+  }
+
+  applyPendingNavigation() {
+    const request = this.pendingNavigation;
+    if (!request?.ready) return false;
+    if (request.file !== this.view.file || request.mode !== this.view.currentMode ||
+        !["length", "equal"].includes(this.settings.trackingMode)) {
+      this.pendingNavigation = null; return false;
+    }
+    if (!this.sourceReady) return false; // refreshSource will retry after cachedRead.
+    this.pendingNavigation = null;
+    this.attachScroller();
+    const index = this.headings.findIndex(heading => heading.position.start.line === request.line);
+    if (index < 0) return false;
+    this.activate(index);
+    return true;
   }
 
   scrubTo(progress) {
@@ -1041,6 +1100,9 @@ class DocumentRail extends RailView {
     this.scroller = next;
     if (this.scroller) {
       this.scroller.addEventListener("scroll", this.onScroll, { passive: true });
+      for (const event of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+        this.scroller.addEventListener(event, this.onNavigationInput, { passive: true });
+      }
     }
   }
 
@@ -1065,6 +1127,9 @@ class DocumentRail extends RailView {
     this.cancelActiveFrame();
     if (this.scroller) {
       this.scroller.removeEventListener("scroll", this.onScroll);
+      for (const event of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+        this.scroller.removeEventListener(event, this.onNavigationInput);
+      }
     }
     this.scroller = null;
   }
@@ -1243,6 +1308,7 @@ class DocumentRail extends RailView {
   }
 
   syncActive() {
+    if (this.applyPendingNavigation()) return;
     if (!this.headings.length) return;
 
     const needsRange = this.settings.trackingMode === "position" || this.settings.activeMode === "visible";
@@ -1311,10 +1377,9 @@ class PreviewRail extends RailView {
   activate(index) {
     if (index < 0) return;
     const mode = this.settings.trackingMode;
-    const ranges = headingAllocations(SAMPLE.map(item => item.percent), 100, mode);
-    this.progress = mode === "equal" || mode === "length"
-      ? (ranges[index].start + ranges[index].end) / 2
-      : Math.min(1, SAMPLE[index].percent / 75);
+    if (!SAMPLE[index]) return;
+    const allocated = headingNavigationProgress(SAMPLE.map(item => item.percent), 100, mode, index);
+    this.progress = allocated ?? Math.min(1, SAMPLE[index].percent / 75);
     this.rebuild();
     if (this.onProgress) this.onProgress(this.progress);
   }
@@ -2168,7 +2233,36 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
       })
     );
 
+    this.installHeadingNavigation();
     this.app.workspace.onLayoutReady(this.refresh);
+  }
+
+  installHeadingNavigation() {
+    const proto = MarkdownView?.prototype;
+    const original = proto?.setEphemeralState;
+    if (typeof original !== "function" || typeof resolveSubpath !== "function") return;
+    const plugin = this;
+    let enabled = true;
+    function navigate(state, ...args) {
+      if (enabled && state && ["subpath", "line", "scroll"].some(key => Object.prototype.hasOwnProperty.call(state, key))) {
+        plugin.rails.get(this)?.cancelHeadingNavigation();
+      }
+      // Preserve native focus, cursor, history and heading resolution first.
+      const result = original.call(this, state, ...args);
+      if (!enabled || !["length", "equal"].includes(plugin.settings.trackingMode) ||
+          typeof state?.subpath !== "string" || !this.file) return result;
+      const target = resolveSubpath(this.app.metadataCache.getFileCache(this.file), state.subpath);
+      if (target?.type !== "heading") return result;
+      plugin.refresh();
+      plugin.rails.get(this)?.queueHeadingNavigation(target.start.line);
+      return result;
+    }
+    proto.setEphemeralState = navigate;
+    this.register(() => {
+      enabled = false;
+      // Other plugins may also wrap this method. Never remove their wrapper.
+      if (proto.setEphemeralState === navigate) proto.setEphemeralState = original;
+    });
   }
 
   onunload() {

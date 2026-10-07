@@ -25,9 +25,17 @@ const root = path.resolve(__dirname, '../..');
       p.removeClass = function(c) { this.classList.remove(c); };
       p.toggleClass = function(c,v) { this.classList.toggle(c,v); };
       window.module = { exports: {} };
-      window.require = () => ({ Plugin: class {}, PluginSettingTab: class {}, setIcon() {} });
+      window.NativeMarkdownView = class {
+        setEphemeralState(state) {
+          this.nativeState = state;
+          const heading = this.app.metadataCache.getFileCache(this.file).headings.find(item => `#${item.heading}` === state.subpath);
+          if (heading) this.currentMode.applyScroll(heading.position.start.line);
+        }
+      };
+      window.require = () => ({ Plugin: class {}, PluginSettingTab: class {}, MarkdownView: NativeMarkdownView, setIcon() {},
+        resolveSubpath(cache,subpath) { const item=cache.headings.find(item=>`#${item.heading}`===subpath);return item?{type:'heading',start:item.position.start}:null; } });
     });
-    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'main.js'), 'utf8') + '\nwindow.testAPI = { RailView, DEFAULTS };' });
+    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'main.js'), 'utf8') + '\nwindow.testAPI = { RailView, DocumentRail, DEFAULTS };' });
     await page.evaluate(() => {
       const { RailView, DEFAULTS } = window.testAPI;
       const settings = { ...DEFAULTS, ...{ hierarchyMode: 'all', showBookmarkButton: false } };
@@ -318,6 +326,43 @@ const root = path.resolve(__dirname, '../..');
     }
     await page.evaluate(() => rail.destroy());
     assert.equal(await page.locator('[id$="-label"]').count(), 0, 'Accessible names are removed on unload');
+    // Real DocumentRail navigation against a browser scroll container, with
+    // source-heading positions deliberately different from equal allocations.
+    for(const reading of [false,true]) {
+      await page.evaluate(reading=>{
+        const host=document.querySelector('#host');host.style.height='360px';
+        const scroller=host.createDiv();Object.assign(scroller.style,{height:'300px',width:'500px',overflow:'auto'});
+        scroller.createDiv().style.height='2100px';
+        const headings=[10,20,80,95].map((line,index)=>({heading:`Synthetic ${index}`,level:1,position:{start:{line}}}));
+        const view=new NativeMarkdownView();view.containerEl=host;view.file={path:'Synthetic.md'};
+        view.app={metadataCache:{getFileCache:()=>({headings})}};view.getViewData=()=>Array(100).fill('synthetic').join('\n');
+        const mode={type:reading?'preview':'source',getScroll:()=>scroller.scrollTop/(scroller.scrollHeight-scroller.clientHeight)*100,
+          applyScroll(line){scroller.scrollTop=line/100*(scroller.scrollHeight-scroller.clientHeight);}};
+        if(reading){mode.renderer={previewEl:scroller,onRendered(fn){fn();}};view.previewMode=mode;}else mode.cm={scrollDOM:scroller};
+        view.currentMode=mode;
+        const plugin=new module.exports();plugin.settings={...testAPI.DEFAULTS,trackingMode:'equal',hoverStyle:'none',hierarchyMode:'all',hideBelowWidth:0,minHeadings:1};
+        plugin.applyStyles=module.exports.prototype.applyStyles;plugin.rails=new Map();plugin.refresh=()=>{};
+        window.navigationCleanup=[];plugin.register=fn=>navigationCleanup.push(fn);
+        window.documentRail=new testAPI.DocumentRail(plugin,view);plugin.rails.set(view,documentRail);documentRail.rebuild();
+        plugin.installHeadingNavigation();window.navigationView=view;window.noteScroller=scroller;
+      },reading);
+      for(const mode of ['length','equal']) {
+        await page.evaluate(mode=>{documentRail.plugin.settings.trackingMode=mode;documentRail.updateSettings();},mode);
+        for(let index=0;index<4;index++) {
+          const box=await page.locator('[role="option"]').nth(index).boundingBox();
+          const bounds=await page.locator('[role="listbox"]').boundingBox();
+          await page.mouse.click(bounds.x+bounds.width/2,box.y+box.height/2);
+          assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,`${mode}/${reading}: real click activates its mark`);
+          await page.evaluate(index=>navigationView.setEphemeralState({subpath:`#Synthetic ${index}`,focus:true}),index);
+          await page.waitForFunction(index=>documentRail.activeIndex===index,index);
+          // Native jumps can already match some marks. Wait for the queued
+          // correction as well before asserting its final scroll destination.
+          await page.waitForFunction(()=>!documentRail.pendingNavigation);
+          assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,`${mode}/${reading}: bookmark final position activates its mark`);
+        }
+      }
+      await page.evaluate(()=>{navigationCleanup.forEach(fn=>fn());documentRail.destroy();noteScroller.remove();});
+    }
     console.log('Browser checks passed: 200 headings, every anchor/offset, resize, wheel/hover/click, full-range drag, single Tab stop, nested keyboard access, focus, labels, dismissal, color-mix.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

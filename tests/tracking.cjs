@@ -64,8 +64,8 @@ console.log('Tracking checks passed: allocations, all rule/end combinations, vie
 // Reading mode must ignore the editor that remains mounted but hidden.
 const listeners = new Map();
 const scroller = name => ({ name, scrollTop: 0, scrollHeight: 1000, clientHeight: 200,
-  addEventListener(type, fn) { listeners.set(name, fn); },
-  removeEventListener() { listeners.delete(name); } });
+  addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+  removeEventListener(type) { listeners.delete(`${name}:${type}`); } });
 const editorScroll = scroller('editor'), readingScroll = scroller('reading');
 const readingMode = { type: 'preview', renderer: { previewEl: readingScroll } };
 const sourceMode = { type: 'source', cm: { scrollDOM: editorScroll } };
@@ -78,12 +78,14 @@ phone.lines = Array(100).fill(''); phone.visibleRange = () => [0, 20];
 phone.scrollTopLine = () => 0; phone.paintProgress = () => {};
 phone.paintActive = (active, current) => { phone.current = current; };
 phone.onScroll = () => phone.syncActive();
+phone.onNavigationInput = () => phone.cancelHeadingNavigation();
 phone.attachScroller(); assert.equal(phone.scroller, readingScroll);
-readingScroll.scrollTop = 680; listeners.get('reading')();
+readingScroll.scrollTop = 680; listeners.get('reading:scroll')();
 assert.equal(phone.current, 2); // allocation advances while the hidden editor remains at zero
 assert.equal(editorScroll.scrollTop, 0);
+phone.pendingNavigation={line:80};listeners.get('reading:wheel')();assert.equal(phone.pendingNavigation,null,'Manual scrolling cancels a queued heading jump');
 phone.view.currentMode = sourceMode; phone.attachScroller();
-assert.equal(phone.scroller, editorScroll); assert.equal(listeners.has('reading'), false);
-editorScroll.scrollTop = 800; listeners.get('editor')(); assert.equal(phone.current, 3);
+assert.equal(phone.scroller, editorScroll); assert.equal(listeners.has('reading:scroll'), false);
+editorScroll.scrollTop = 800; listeners.get('editor:scroll')(); assert.equal(phone.current, 3);
 phone.detachScroller(); assert.equal(listeners.size, 0);
 console.log('Mode selection checks passed: hidden editor ignored, reading scroll events advance tracking, switching modes rebinds and cleans up.');
