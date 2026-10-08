@@ -10,6 +10,12 @@ const root = path.resolve(__dirname, '../..');
     try {
       const page = await browser.newPage({viewport:{width:1024,height:768},hasTouch:true,isMobile:true});
       await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1"><style>#host{position:relative;width:800px;height:600px}</style><button id="before">Before</button><div id="host"></div>');
+      // Obsidian's clickable-icon class fades SVG opacity on hover. The
+      // bookmark action must stay steady while its label refreshes.
+      await page.addStyleTag({content:`
+        .clickable-icon svg { opacity: 0.5; transition: opacity 100ms ease-in-out; }
+        .clickable-icon:hover svg { opacity: 1; }
+      `});
       await page.addStyleTag({path:path.join(root,'styles.css')});
       await page.evaluate(() => {
         const p = HTMLElement.prototype;
@@ -85,6 +91,13 @@ const root = path.resolve(__dirname, '../..');
       assert.equal(await icon.isVisible(),true,`${engine}: missing native icons get a visible fallback`);
       assert.equal(await icon.getAttribute('viewBox'),'0 0 24 24');
       assert.equal(await icon.evaluate(el=>getComputedStyle(el).width),'16px');
+      assert.deepEqual(await icon.evaluate(el=>({opacity:getComputedStyle(el).opacity,duration:getComputedStyle(el).transitionDuration})),
+        {opacity:'1',duration:'0s'},`${engine}: native icon hover fades cannot affect the bookmark`);
+      assert.equal(await page.evaluate(()=>{
+        const svg=rail.flyoutBookmark.querySelector('svg');
+        for(let i=0;i<20;i++) rail.showFlyout(rail.flyoutIndex);
+        return svg===rail.flyoutBookmark.querySelector('svg');
+      }),true,`${engine}: repeated label updates retain the same SVG`);
       await page.locator('.scrollspy-bookmark-button').click();
       assert.equal(await page.evaluate(()=>window.saved),true);
       assert.equal(await icon.locator('path').last().getAttribute('d'),'m9 10 2 2 4-4');

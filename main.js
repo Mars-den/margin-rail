@@ -674,27 +674,31 @@ class RailView {
     // Mobile and desktop Obsidian can ship different Lucide icon versions.
     const candidates = state.saved ? ["bookmark-check", "bookmark-minus", "bookmark"] : ["bookmark-plus", "bookmark"];
     const icon = typeof getIcon === "function" ? candidates.find(name => getIcon(name)) : candidates[0];
-    this.flyoutBookmark.replaceChildren?.();
-    setIcon(this.flyoutBookmark, icon || "bookmark");
-    // Keep the action visible even when the installed icon registry lacks all
-    // variants. This fixed outline uses the same stroke and size as Lucide.
-    if (!this.flyoutBookmark.querySelector?.("svg") && this.flyoutBookmark.ownerDocument?.createElementNS) {
-      const doc = this.flyoutBookmark.ownerDocument;
-      const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("aria-hidden", "true");
-      const outline = doc.createElementNS("http://www.w3.org/2000/svg", "path");
-      outline.setAttribute("d", "M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z");
-      svg.append(outline);
-      const symbol = doc.createElementNS("http://www.w3.org/2000/svg", "path");
-      symbol.setAttribute("d", state.saved ? "m9 10 2 2 4-4" : "M12 7v6m-3-3h6");
-      svg.append(symbol);
-      this.flyoutBookmark.replaceChildren(svg);
+    const iconKey = `${icon || "bookmark"}:${state.saved ? "saved" : "unsaved"}`;
+    if (this.bookmarkIconKey !== iconKey || !this.flyoutBookmark.querySelector?.("svg")) {
+      this.flyoutBookmark.replaceChildren?.();
+      setIcon(this.flyoutBookmark, icon || "bookmark");
+      // Keep the action visible even when the installed icon registry lacks all
+      // variants. This fixed outline uses the same stroke and size as Lucide.
+      if (!this.flyoutBookmark.querySelector?.("svg") && this.flyoutBookmark.ownerDocument?.createElementNS) {
+        const doc = this.flyoutBookmark.ownerDocument;
+        const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "2");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("aria-hidden", "true");
+        const outline = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+        outline.setAttribute("d", "M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z");
+        svg.append(outline);
+        const symbol = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+        symbol.setAttribute("d", state.saved ? "m9 10 2 2 4-4" : "M12 7v6m-3-3h6");
+        svg.append(symbol);
+        this.flyoutBookmark.replaceChildren(svg);
+      }
+      this.bookmarkIconKey = iconKey;
     }
     // aria-label supplies Obsidian’s tooltip; title would add a second native one.
     this.flyoutBookmark.removeAttribute("title");

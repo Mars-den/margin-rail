@@ -564,7 +564,7 @@
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
 }
-.scrollspy-flyout .scrollspy-bookmark-button svg { display: block; width: 16px; height: 16px; flex-shrink: 0; pointer-events: none; }
+.scrollspy-flyout .scrollspy-bookmark-button svg { display: block; width: 16px; height: 16px; flex-shrink: 0; pointer-events: none; opacity: 1; transition: none; }
 
 /* Bookmark dots sit toward the note and do not change tick spacing or targets. */
 .scrollspy-tick { position: relative; }
