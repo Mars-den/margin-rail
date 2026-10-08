@@ -332,13 +332,15 @@ const root = path.resolve(__dirname, '../..');
       await page.evaluate(reading=>{
         const host=document.querySelector('#host');host.style.height='360px';
         const scroller=host.createDiv();Object.assign(scroller.style,{height:'300px',width:'500px',overflow:'auto'});
-        scroller.createDiv().style.height='2100px';
+        const body=scroller.createDiv();Object.assign(body.style,{height:'2100px',position:'relative'});
         const headings=[10,20,80,95].map((line,index)=>({heading:`Synthetic ${index}`,level:1,position:{start:{line}}}));
+        const headingEls=headings.map(item=>{const el=body.createEl('h2',{text:item.heading});Object.assign(el.style,{position:'absolute',top:`${item.position.start.line*18}px`,height:'28px',margin:'0'});return el;});
+        window.headingEls=headingEls;
         const view=new NativeMarkdownView();view.containerEl=host;view.file={path:'Synthetic.md'};
         view.app={metadataCache:{getFileCache:()=>({headings})}};view.getViewData=()=>Array(100).fill('synthetic').join('\n');
-        const mode={type:reading?'preview':'source',getScroll:()=>scroller.scrollTop/(scroller.scrollHeight-scroller.clientHeight)*100,
-          applyScroll(line){scroller.scrollTop=line/100*(scroller.scrollHeight-scroller.clientHeight);}};
-        if(reading){mode.renderer={previewEl:scroller,onRendered(fn){fn();}};view.previewMode=mode;}else mode.cm={scrollDOM:scroller};
+        const mode={type:reading?'preview':'source',getScroll:()=>scroller.scrollTop/18,
+          applyScroll(line){this.nativeJumps=(this.nativeJumps||0)+1;scroller.scrollTop=line*18;}};
+        if(reading){mode.renderer={previewEl:scroller,onRendered(fn){fn();},sections:headings.map((item,index)=>({lineStart:item.position.start.line,lineEnd:item.position.start.line+1,el:{querySelectorAll:()=>[headingEls[index]]}}))};view.previewMode=mode;}else mode.cm={scrollDOM:scroller,contentDOM:{offsetTop:0},state:{doc:{lines:100,line(number){return{from:number-1};}}},lineBlockAt(position){return{top:position*18,height:28};}};
         view.currentMode=mode;
         const plugin=new module.exports();plugin.settings={...testAPI.DEFAULTS,trackingMode:'equal',hoverStyle:'none',hierarchyMode:'all',hideBelowWidth:0,minHeadings:1};
         plugin.applyStyles=module.exports.prototype.applyStyles;plugin.rails=new Map();plugin.refresh=()=>{};
@@ -352,16 +354,104 @@ const root = path.resolve(__dirname, '../..');
           const box=await page.locator('[role="option"]').nth(index).boundingBox();
           const bounds=await page.locator('[role="listbox"]').boundingBox();
           await page.mouse.click(bounds.x+bounds.width/2,box.y+box.height/2);
+          await page.waitForFunction(()=>!documentRail.pendingNavigation);
           assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,`${mode}/${reading}: real click activates its mark`);
+          const repeat=await page.evaluate(index=>{
+            const before=noteScroller.scrollTop,jumps=navigationView.currentMode.nativeJumps||0;
+            documentRail.activate(index);documentRail.activate(index);
+            return {before,after:noteScroller.scrollTop,jumps,afterJumps:navigationView.currentMode.nativeJumps||0,pending:!!documentRail.pendingNavigation};
+          },index);
+          assert.equal(repeat.after,repeat.before,'Repeated clicks keep the scroll position stable');
+          assert.equal(repeat.afterJumps,repeat.jumps,'Repeated clicks never make an intermediate native jump');
+          assert.equal(repeat.pending,false,'Measured headings need no delayed scroll correction');
+          const visible=await page.evaluate(index=>{
+            const heading=headingEls[index].getBoundingClientRect(),frame=noteScroller.getBoundingClientRect();
+            return heading.top>=frame.top && heading.bottom<=frame.bottom;
+          },index);
+          if(mode==='length'||index!==1)assert.equal(visible,true,`${mode}/${reading}: heading remains visible after a real click`);
+          if(mode==='length')assert.ok(await page.evaluate(index=>
+            Math.abs(headingEls[index].getBoundingClientRect().top-noteScroller.getBoundingClientRect().top-24)<=1,index),
+            `${reading}: every heading lands at the same 24px inset`);
           await page.evaluate(index=>navigationView.setEphemeralState({subpath:`#Synthetic ${index}`,focus:true}),index);
           await page.waitForFunction(index=>documentRail.activeIndex===index,index);
           // Native jumps can already match some marks. Wait for the queued
           // correction as well before asserting its final scroll destination.
           await page.waitForFunction(()=>!documentRail.pendingNavigation);
           assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,`${mode}/${reading}: bookmark final position activates its mark`);
+          if(mode==='length'||index!==1)assert.equal(await page.evaluate(index=>{
+            const heading=headingEls[index].getBoundingClientRect(),frame=noteScroller.getBoundingClientRect();
+            return heading.top>=frame.top && heading.bottom<=frame.bottom;
+          },index),true,`${mode}/${reading}: bookmark heading remains visible`);
+          if(mode==='length' && index>0) {
+            await page.evaluate(index=>{
+              const start=documentRail.headingLandingStarts()[index]*(noteScroller.scrollHeight-noteScroller.clientHeight);
+              noteScroller.scrollTop=start-4;documentRail.syncActive();
+            },index);
+            assert.equal(await page.evaluate(()=>documentRail.activeIndex),index-1,'Manual scrolling above the landing returns to the previous section');
+            await page.evaluate(index=>{
+              noteScroller.scrollTop=documentRail.headingLandingStarts()[index]*(noteScroller.scrollHeight-noteScroller.clientHeight)+4;
+              documentRail.syncActive();
+            },index);
+            assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,'Manual scrolling below the landing activates its section');
+          }
         }
       }
+      await page.evaluate(()=>{
+        documentRail.plugin.settings.trackingMode='length';
+        headingEls.forEach((heading,index)=>heading.style.top=`${[180,800,830,860][index]}px`);
+        noteScroller.firstElementChild.style.height='1100px';
+        if(navigationView.currentMode.cm)navigationView.currentMode.cm.lineBlockAt=position=>{
+          const index=[10,20,80,95].indexOf(position);
+          return {top:headingEls[index].offsetTop,height:28};
+        };
+        documentRail.updateSettings();
+      });
+      for(let index=1;index<4;index++) {
+        await page.evaluate(index=>documentRail.activate(index),index);
+        await page.waitForFunction(()=>!documentRail.pendingNavigation);
+        assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,'Empty trailing heading navigation selects its own mark');
+        assert.equal(await page.evaluate(index=>{
+          const heading=headingEls[index].getBoundingClientRect(),frame=noteScroller.getBoundingClientRect();
+          return heading.top>=frame.top && heading.bottom<=frame.bottom;
+        },index),true,'Empty trailing heading remains visible');
+        if(index<3) {
+          assert.ok(await page.evaluate(index=>{
+            const starts=documentRail.headingLandingStarts();
+            return (starts[index+1]-starts[index])*(noteScroller.scrollHeight-noteScroller.clientHeight)>=63.99;
+          },index),'Empty trailing headings get at least 64px of tracking space');
+          await page.evaluate(index=>{
+            const starts=documentRail.headingLandingStarts();
+            noteScroller.scrollTop=starts[index]*(noteScroller.scrollHeight-noteScroller.clientHeight)+32;
+            documentRail.syncActive();
+          },index);
+          assert.equal(await page.evaluate(()=>documentRail.activeIndex),index,'Scrolling through the middle of an empty section keeps its mark active');
+        }
+      }
+      await page.evaluate(()=>{
+        documentRail.plugin.settings.placeCursorOnNavigate=true;
+        documentRail.plugin.settings.highlightOnNavigate=true;
+        navigationView.editor={setCursor(){throw Error('Reading mode must not move the hidden editor cursor');}};
+        const cm=navigationView.currentMode.cm;
+        if(cm) {
+          cm.dispatch=transaction=>window.cursorTransaction=transaction;
+          cm.contentDOM.focus=options=>window.cursorFocusOptions=options;
+        }
+        documentRail.activate(1);
+      });
+      assert.equal(await page.locator('.scrollspy-heading-flash').count(),1,'Navigation creates a temporary destination highlight');
+      if(!reading) {
+        assert.equal(await page.evaluate(()=>cursorTransaction.selection.anchor),20,'Editing navigation places the cursor at the heading source line');
+        assert.equal(await page.evaluate(()=>cursorFocusOptions.preventScroll),true,'Cursor focus does not change the scroll destination');
+        assert.equal(await page.evaluate(()=>cursorTransaction.scrollIntoView),undefined,'Cursor selection does not request a competing scroll');
+      }
+      await page.waitForFunction(()=>!document.querySelector('.scrollspy-heading-flash'));
+      await page.evaluate(()=>documentRail.activate(1));
+      assert.equal(await page.locator('.scrollspy-heading-flash').count(),1,'Repeated navigation restarts the highlight without duplicate overlays');
+      await page.evaluate(()=>{noteScroller.scrollTop-=10;noteScroller.dispatchEvent(new Event('scroll'));});
+      assert.equal(await page.locator('.scrollspy-heading-flash').count(),0,'Scrolling dismisses feedback that would otherwise float over unrelated content');
+      await page.evaluate(()=>documentRail.activate(1));
       await page.evaluate(()=>{navigationCleanup.forEach(fn=>fn());documentRail.destroy();noteScroller.remove();});
+      assert.equal(await page.locator('.scrollspy-heading-flash').count(),0,'Destroy removes destination feedback and its timer');
     }
     console.log('Browser checks passed: 200 headings, every anchor/offset, resize, wheel/hover/click, full-range drag, single Tab stop, nested keyboard access, focus, labels, dismissal, color-mix.');
   } finally { await browser.close(); }

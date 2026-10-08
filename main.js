@@ -118,6 +118,8 @@ const SESSION_DEFAULTS = {
   settingsSection: "appearance",
   previewCollapsed: false,
   phoneVisibility: "hidden", // hidden | landscape | always; independent of presets
+  placeCursorOnNavigate: false,
+  highlightOnNavigate: false,
 };
 
 const PRESET_KEYS = Object.keys(DEFAULTS);
@@ -170,20 +172,64 @@ function headingAllocations(lines, totalLines, mode) {
   const weights = lines.map((line, i) => mode === "equal" ? 1 :
     Math.max(1, (lines[i + 1] ?? totalLines) - (i === 0 ? 0 : line)));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
-  let start = 0;
+  let used = 0;
   return weights.map((weight) => {
-    const range = { start, end: start + weight / total };
-    start = range.end;
-    return range;
+    const start = used / total;
+    used += weight;
+    return { start, end: used / total };
   });
 }
 
-// Navigation is the inverse of allocation-based tracking, shared by real
-// notes and the settings sample. Stay inside the range, away from boundaries.
-function headingNavigationProgress(lines, totalLines, mode, index) {
+// Short and trailing sections need a useful scroll interval, not a one-pixel
+// turn. Borrow space from the preceding section, bounded by heading visibility.
+function headingLandingStarts(tops, scrollRange, viewportHeight = 200, bottoms = tops.map(top => top + 24)) {
+  if (scrollRange <= 0) return tops.map(() => 0);
+  const starts = tops.map(top => Math.max(0, Math.ceil(top - 24)));
+  let step = Math.min(64, viewportHeight / 4, scrollRange / Math.max(1, tops.length - 1));
+  for (let i = 0; i < tops.length; i++) {
+    // Never move a landing past its heading, or so far back it leaves the screen.
+    if (i) step = Math.min(step, starts[i] / i);
+    const remaining = tops.length - 1 - i;
+    if (remaining) step = Math.min(step, Math.max(0, scrollRange - Math.max(0, bottoms[i] - viewportHeight)) / remaining);
+  }
+  step = Math.max(0, Math.floor(step));
+  for (let i = starts.length - 1; i >= 0; i--) {
+    starts[i] = Math.min(starts[i], i === starts.length - 1 ? scrollRange : starts[i + 1] - step);
+  }
+  for (let i = 0; i < starts.length; i++) starts[i] = Math.max(i * step, starts[i]);
+  return starts.map(top => top / scrollRange);
+}
+
+function physicalHeadingRanges(starts) {
+  return starts.map((start, i) => ({ start: i === 0 ? 0 : start, end: starts[i + 1] ?? 1 }));
+}
+
+// Prefer the actual heading, near the top with a little breathing room, while
+// staying inside the scroll share that activates its mark. Use integer-safe
+// boundaries because browsers round scrollTop to physical CSS pixels.
+function headingNavigationProgress(lines, totalLines, mode, index, landing) {
   if ((mode !== "length" && mode !== "equal") || index < 0 || index >= lines.length) return null;
   const range = headingAllocations(lines, totalLines, mode)[index];
-  return (range.start + range.end) / 2;
+  if (!landing) return range.start; // Settings sample: start of the section.
+  const { scrollRange, viewportHeight, headingTop, headingBottom, preferredTop, lastAtBottom } = landing;
+  if (scrollRange <= 0) return null;
+  let min = Math.ceil(range.start * scrollRange);
+  if (min / scrollRange < range.start) min++;
+  let max = index === lines.length - 1 ? Math.floor(scrollRange)
+    : Math.ceil(range.end * scrollRange) - 1;
+  if (index < lines.length - 1 && max / scrollRange >= range.end) max--;
+  if (lastAtBottom && index < lines.length - 1) max = Math.min(max, Math.ceil(scrollRange - 2) - 1);
+  const preferred = Number.isFinite(headingTop) ? headingTop - 24 : preferredTop;
+  let low = min, high = max;
+  if (Number.isFinite(headingTop) && Number.isFinite(headingBottom)) {
+    const visibleMin = Math.max(min, Math.ceil(headingBottom - viewportHeight));
+    const visibleMax = Math.min(max, Math.floor(headingTop));
+    if (visibleMin <= visibleMax) { low = visibleMin; high = visibleMax; }
+  }
+  // If there is no heading-visible overlap, choose the closest point in the
+  // mark's range rather than skipping to the middle of its section.
+  if (max < min) return range.start; // A tiny scroll range may have no distinct pixel for this mark.
+  return Math.max(low, Math.min(high, Math.round(preferred))) / scrollRange;
 }
 
 function resolveCurrent(lines, totalLines, settings, viewport) {
@@ -192,7 +238,9 @@ function resolveCurrent(lines, totalLines, settings, viewport) {
   if (settings.lastAtBottom && viewport.scrollable && viewport.atBottom) return lines.length - 1;
   if (settings.trackingMode === "off") return -1;
   if (settings.trackingMode === "length" || settings.trackingMode === "equal") {
-    const ranges = headingAllocations(lines, totalLines, settings.trackingMode);
+    const ranges = settings.trackingMode === "length" && viewport.headingStarts
+      ? physicalHeadingRanges(viewport.headingStarts)
+      : headingAllocations(lines, totalLines, settings.trackingMode);
     const progress = Math.max(0, Math.min(1, viewport.progress));
     const index = ranges.findIndex((range) => progress < range.end);
     return index < 0 ? lines.length - 1 : index;
@@ -223,7 +271,9 @@ function sectionProgress(lines, totalLines, settings, viewport, current) {
   if (current < 0 || !lines.length) return 0;
   if (viewport.scrollable && viewport.atBottom) return 1;
   if (settings.trackingMode === "length" || settings.trackingMode === "equal") {
-    const range = headingAllocations(lines, totalLines, settings.trackingMode)[current];
+    const range = (settings.trackingMode === "length" && viewport.headingStarts
+      ? physicalHeadingRanges(viewport.headingStarts)
+      : headingAllocations(lines, totalLines, settings.trackingMode))[current];
     return clampProgress((viewport.progress - range.start) / (range.end - range.start));
   }
   const start = lines[current];
@@ -923,11 +973,15 @@ class DocumentRail extends RailView {
     this.onBookmarksChanged = () => { this.paintBookmarks(); this.updateBookmarkButton(); };
 
     this.scrollFrame = 0;
-    this.onScroll = () => this.scheduleActive();
+    this.onScroll = () => {
+      if (this.navigationHighlight && Math.abs(this.scroller.scrollTop - this.navigationHighlightScrollTop) > 1) this.clearNavigationHighlight();
+      this.scheduleActive();
+    };
     this.onNavigationInput = () => this.cancelHeadingNavigation();
 
     // Reevaluate both pane width and phone orientation when the pane resizes.
     this.resizeObserver = new ResizeObserver(() => {
+      this.clearNavigationHighlight();
       this.syncWidth();
       this.scheduleActive();
     });
@@ -935,6 +989,7 @@ class DocumentRail extends RailView {
   }
 
   destroy() {
+    this.clearNavigationHighlight();
     this.cancelHeadingNavigation();
     this.sourceEpoch = (this.sourceEpoch || 0) + 1;
     this.bookmarksPlugin?.off?.("changed", this.onBookmarksChanged);
@@ -947,13 +1002,66 @@ class DocumentRail extends RailView {
     this.cancelHeadingNavigation();
     const heading = this.headings[index];
     if (!heading) return;
-    const progress = headingNavigationProgress(this.headings.map(item => item.position.start.line),
-      this.lines.length, this.settings.trackingMode, index);
-    if (progress !== null && this.scroller) { this.scrubTo(progress); return; }
     const mode = this.view.currentMode;
+    const allocated = ["length", "equal"].includes(this.settings.trackingMode);
+    // Already measured headings can go straight to their final destination.
+    // A native reveal followed by our correction causes a visible double jump.
+    const bounds = allocated && this.headingBounds(index);
+    if (bounds && bounds.measured !== false &&
+        (this.settings.trackingMode !== "length" || this.headingLandingStarts())) {
+      this.finishHeadingNavigation(index, true);
+      return;
+    }
     if (mode && typeof mode.applyScroll === "function") {
       mode.applyScroll(heading.position.start.line);
+      if (allocated || this.settings.placeCursorOnNavigate || this.settings.highlightOnNavigate) {
+        this.queueHeadingNavigation(heading.position.start.line, true);
+      }
     }
+  }
+
+  finishHeadingNavigation(index, feedback) {
+    const mode = this.view.currentMode;
+    const line = this.headings[index].position.start.line;
+    if (feedback && this.settings.placeCursorOnNavigate && mode?.type !== "preview" && mode !== this.view.previewMode) {
+      const cm = mode?.cm;
+      if (cm?.state?.doc && typeof cm.dispatch === "function") {
+        const position = cm.state.doc.line(Math.min(cm.state.doc.lines, line + 1)).from;
+        // Selection without scrollIntoView preserves the section landing rule.
+        cm.dispatch({ selection: { anchor: position } });
+        cm.contentDOM?.focus?.({ preventScroll: true });
+      } else if (this.view.editor?.setCursor) {
+        this.view.editor.setCursor({ line, ch: 0 });
+      }
+    }
+    if (["length", "equal"].includes(this.settings.trackingMode)) this.landAtHeading(index);
+    else this.syncActive();
+    if (feedback && this.settings.highlightOnNavigate) this.showNavigationHighlight(index);
+  }
+
+  clearNavigationHighlight() {
+    if (this.navigationHighlightTimer) clearTimeout(this.navigationHighlightTimer);
+    this.navigationHighlightTimer = null;
+    this.navigationHighlight?.remove();
+    this.navigationHighlight = null;
+  }
+
+  showNavigationHighlight(index) {
+    this.clearNavigationHighlight();
+    const bounds = this.headingBounds(index), el = this.scroller;
+    if (!bounds || !el) return;
+    const frame = el.getBoundingClientRect();
+    const top = Math.max(frame.top, frame.top + el.clientTop + bounds.top - el.scrollTop);
+    const bottom = Math.min(frame.bottom, frame.top + el.clientTop + bounds.bottom - el.scrollTop);
+    if (bottom <= top) return;
+    const highlight = this.navigationHighlight = el.ownerDocument.createElement("div");
+    highlight.className = "scrollspy-heading-flash";
+    highlight.setAttribute("aria-hidden", "true");
+    Object.assign(highlight.style, { top: `${top}px`, left: `${frame.left + el.clientLeft}px`,
+      width: `${el.clientWidth}px`, height: `${bottom - top}px` });
+    el.ownerDocument.body.appendChild(highlight);
+    this.navigationHighlightScrollTop = el.scrollTop;
+    this.navigationHighlightTimer = setTimeout(() => this.clearNavigationHighlight(), 1400);
   }
 
   cancelHeadingNavigation() {
@@ -962,9 +1070,9 @@ class DocumentRail extends RailView {
     this.navigationFrame = 0;
   }
 
-  queueHeadingNavigation(line) {
+  queueHeadingNavigation(line, feedback = false) {
     this.cancelHeadingNavigation();
-    const request = this.pendingNavigation = { line, file: this.view.file, mode: this.view.currentMode, ready: false };
+    const request = this.pendingNavigation = { line, file: this.view.file, mode: this.view.currentMode, ready: false, feedback };
     const win = this.navigationWindow = this.host.ownerDocument.defaultView;
     const schedule = () => {
       if (this.pendingNavigation !== request) return;
@@ -987,8 +1095,7 @@ class DocumentRail extends RailView {
   applyPendingNavigation() {
     const request = this.pendingNavigation;
     if (!request?.ready) return false;
-    if (request.file !== this.view.file || request.mode !== this.view.currentMode ||
-        !["length", "equal"].includes(this.settings.trackingMode)) {
+    if (request.file !== this.view.file || request.mode !== this.view.currentMode) {
       this.pendingNavigation = null; return false;
     }
     if (!this.sourceReady) return false; // refreshSource will retry after cachedRead.
@@ -996,8 +1103,81 @@ class DocumentRail extends RailView {
     this.attachScroller();
     const index = this.headings.findIndex(heading => heading.position.start.line === request.line);
     if (index < 0) return false;
-    this.activate(index);
+    this.finishHeadingNavigation(index, request.feedback);
     return true;
+  }
+
+  headingBounds(index) {
+    const heading = this.headings[index];
+    const line = heading.position.start.line;
+    const mode = this.view.currentMode;
+    const cm = mode?.cm;
+    if (cm?.state?.doc && typeof cm.lineBlockAt === "function") {
+      const position = cm.state.doc.line(Math.min(cm.state.doc.lines, line + 1)).from;
+      const block = cm.lineBlockAt(position);
+      const top = block.top + (cm.contentDOM?.offsetTop || 0);
+      return { top, bottom: top + block.height, measured: true };
+    }
+    for (const section of mode?.renderer?.sections || []) {
+      if (section.lineStart > line || section.lineEnd < line) continue;
+      const nodes = Array.from(section.el?.querySelectorAll?.("h1,h2,h3,h4,h5,h6") || []);
+      const node = section.lineStart === line ? nodes[0] : nodes.find(node =>
+        node.getAttribute("data-heading") === heading.heading || node.textContent.trim() === heading.heading);
+      if (!node) continue;
+      const box = node.getBoundingClientRect();
+      if (!box.height) continue;
+      const offset = this.scroller.scrollTop - this.scroller.getBoundingClientRect().top - this.scroller.clientTop;
+      return { top: box.top + offset, bottom: box.bottom + offset, measured: true };
+    }
+    // Unmounted reading sections retain a layout box. Estimate within that
+    // section until its actual heading DOM becomes available.
+    for (const section of mode?.renderer?.sections || []) {
+      if (section.lineStart > line || section.lineEnd < line || !section.el) continue;
+      const fraction = (line - section.lineStart) / Math.max(1, section.lineEnd - section.lineStart + 1);
+      const renderer = mode.renderer;
+      if (typeof renderer.getSectionTop === "function" && Number.isFinite(section.height)) {
+        const offset = renderer.getSectionTop(section);
+        if (offset >= 0) {
+          const top = offset + (renderer.topSpace || 0) + fraction * section.height;
+          return { top, bottom: top, measured: false };
+        }
+      }
+      const box = section.el.getBoundingClientRect();
+      if (!box.height) continue;
+      const top = box.top + this.scroller.scrollTop - this.scroller.getBoundingClientRect().top - this.scroller.clientTop + fraction * box.height;
+      return { top, bottom: top, measured: false };
+    }
+    return null;
+  }
+
+  headingLandingStarts() {
+    const el = this.scroller;
+    if (!el) return null;
+    const bounds = this.headings.map((_, index) => this.headingBounds(index));
+    const tops = bounds.map(bounds => bounds?.top);
+    // Missing virtualized headings use their renderer section's layout estimate
+    // in headingBounds; if unavailable, keep native source-position tracking.
+    if (tops.some(top => !Number.isFinite(top))) return null;
+    return headingLandingStarts(tops, Math.max(0, el.scrollHeight - el.clientHeight), el.clientHeight, bounds.map(bounds => bounds.bottom));
+  }
+
+  landAtHeading(index) {
+    const el = this.scroller;
+    if (!el) return;
+    if (this.settings.trackingMode === "length") {
+      const starts = this.headingLandingStarts();
+      if (starts) this.scrubTo(starts[index]);
+      else this.syncActive();
+      return;
+    }
+    const bounds = this.headingBounds(index);
+    const progress = headingNavigationProgress(this.headings.map(item => item.position.start.line),
+      this.lines.length, this.settings.trackingMode, index, {
+        scrollRange: Math.max(0, el.scrollHeight - el.clientHeight), viewportHeight: el.clientHeight,
+        headingTop: bounds?.top, headingBottom: bounds?.bottom,
+        preferredTop: el.scrollTop, lastAtBottom: this.settings.lastAtBottom,
+      });
+    if (progress !== null) this.scrubTo(progress);
   }
 
   scrubTo(progress) {
@@ -1322,8 +1502,16 @@ class DocumentRail extends RailView {
       progress: scrollRange > 0 ? el.scrollTop / scrollRange : 0,
       scrollable: scrollRange > 2,
       atBottom: this.atBottom(),
+      headingStarts: this.settings.trackingMode === "length" ? this.headingLandingStarts() : null,
     };
     const lines = this.headings.map((heading) => heading.position.start.line);
+    if (this.settings.trackingMode === "length" && !viewport.headingStarts) {
+      // Do not assign unrelated percentage ranges while layout is unavailable.
+      const current = resolveCurrent(lines, this.lines.length, { ...this.settings, trackingMode: "position" }, viewport);
+      this.paintActive(resolveActive(lines, this.settings, viewport, current), current);
+      this.paintProgress(sectionProgress(lines, this.lines.length, { ...this.settings, trackingMode: "position" }, viewport, current));
+      return;
+    }
     const current = resolveCurrent(lines, this.lines.length, this.settings, viewport);
     const active = resolveActive(lines, this.settings, viewport, current);
 
@@ -1378,7 +1566,8 @@ class PreviewRail extends RailView {
     if (index < 0) return;
     const mode = this.settings.trackingMode;
     if (!SAMPLE[index]) return;
-    const allocated = headingNavigationProgress(SAMPLE.map(item => item.percent), 100, mode, index);
+    const allocated = mode === "length" ? headingLandingStarts(SAMPLE.map(item => item.percent * 10), 750, 250)[index]
+      : headingNavigationProgress(SAMPLE.map(item => item.percent), 100, mode, index);
     this.progress = allocated ?? Math.min(1, SAMPLE[index].percent / 75);
     this.rebuild();
     if (this.onProgress) this.onProgress(this.progress);
@@ -1417,7 +1606,8 @@ class PreviewRail extends RailView {
   syncActive() {
     const lines = SAMPLE.map(item => item.percent);
     const viewport = { first: this.progress * 75, last: this.progress * 75 + 25,
-      progress: this.progress, scrollable: true, atBottom: this.progress >= 1 };
+      progress: this.progress, scrollable: true, atBottom: this.progress >= 1,
+      headingStarts: this.settings.trackingMode === "length" ? headingLandingStarts(SAMPLE.map(item => item.percent * 10), 750, 250) : null };
     const current = resolveCurrent(lines, 100, this.settings, viewport);
     this.paintActive(resolveActive(lines, this.settings, viewport, current), current);
     this.paintProgress(sectionProgress(lines, 100, this.settings, viewport, current));
@@ -1803,7 +1993,10 @@ class ScrollspySettingTab extends PluginSettingTab {
       const allocated = mode === "equal" || mode === "length";
       allocations.hidden = !allocated;
       if (allocated) {
-        headingAllocations(SAMPLE.map(item => item.percent), 100, mode).forEach((range, i) => {
+        const ranges = mode === "length"
+          ? physicalHeadingRanges(headingLandingStarts(SAMPLE.map(item => item.percent * 10), 750, 250))
+          : headingAllocations(SAMPLE.map(item => item.percent), 100, mode);
+        ranges.forEach((range, i) => {
           const segment = allocations.createEl("button", { text: String(i + 1), cls: i === current ? "is-current" : "" });
           segment.style.flex = String(range.end - range.start);
           const label = `${SAMPLE[i].title}: ${(range.start * 100).toFixed(1)}–${(range.end * 100).toFixed(1)}%`;
@@ -1812,7 +2005,7 @@ class ScrollspySettingTab extends PluginSettingTab {
           segment.addEventListener("click", () => this.preview.activate(i));
         });
       }
-      note.setText(allocated ? "Each numbered block is a heading’s share. Click one or scrub the slider. Section length uses source lines." :
+      note.setText(allocated ? "Each numbered block is a heading’s share. Click one or scrub the slider. Section length follows heading landing positions." :
         "Drag the rail or scrub the slider. Hover to reveal headings; click a bar to jump. Sample viewport: 25% of the note.");
     };
     input.addEventListener("input", () => {
@@ -1840,10 +2033,13 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
   renderTracking(s) {
+    const navigation = this.heading("Heading navigation");
+    this.toggle(navigation, "Place cursor at heading", "When clicking a mark in editing mode, move the cursor to the start of its heading.", "placeCursorOnNavigate", false);
+    this.toggle(navigation, "Briefly highlight heading", "When clicking a mark, highlight its destination and fade it out. Works in reading and editing modes.", "highlightOnNavigate", false);
     const box = this.heading("Scroll tracking");
     this.choices(box, "Tracking rule", "Try each rule with the slider above.", "trackingMode", {
       position: ["Follow the note", "Current when its heading reaches the top."],
-      length: ["By section length", "Longer sections get more scroll time. Every heading gets a turn."],
+      length: ["By section length", "Tracks the rendered sections. Longer sections stay active longer."],
       equal: ["Equal shares", "Every heading gets the same scroll time."],
       off: ["No tracking", "Keep the rail for navigation without a current marker."],
     });

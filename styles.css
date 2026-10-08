@@ -619,3 +619,20 @@
 @media (prefers-reduced-motion: reduce) {
   .scrollspy-flyout[data-label-motion] { transition: none; transform: translateY(-50%); }
 }
+
+/* Temporary navigation feedback, independent of the mark's active state. */
+.scrollspy-heading-flash {
+  position: fixed;
+  pointer-events: none;
+  z-index: 5;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--interactive-accent) 22%, transparent);
+  animation: scrollspy-heading-flash 1.4s ease-out forwards;
+}
+@keyframes scrollspy-heading-flash {
+  0%, 25% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scrollspy-heading-flash { animation: none; }
+}

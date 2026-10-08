@@ -12,7 +12,7 @@ const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {}
   } }), module: { exports: {} } };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8') +
-  '\nmodule.exports.internals={DEFAULTS,DocumentRail,headingNavigationProgress};', context);
+  '\nmodule.exports.internals={DEFAULTS,DocumentRail,headingNavigationProgress,resolveCurrent,headingLandingStarts,sectionProgress};', context);
 const Plugin = context.module.exports;
 const { DEFAULTS, DocumentRail, headingNavigationProgress } = Plugin.internals;
 const headingLines = [10, 20, 80, 95];
@@ -32,6 +32,7 @@ function fixture(mode, reading = false) {
   view.currentMode=nativeMode;
   const rail=Object.create(DocumentRail.prototype);
   Object.assign(rail,{plugin,view,headings,lines:Array(100).fill(''),sourceReady:true,scroller,host:{ownerDocument:{defaultView:win}}});
+  rail.headingBounds=index=>({top:headingLines[index]*5,bottom:headingLines[index]*5+24});
   rail.attachScroller=()=>{};rail.scrollTopLine=()=>scroller.scrollTop/5;
   rail.visibleRange=()=>[rail.scrollTopLine(),rail.scrollTopLine()+20];
   rail.paintActive=(active,current)=>{rail.activeIndex=current;};rail.paintProgress=()=>{};
@@ -42,12 +43,16 @@ function fixture(mode, reading = false) {
 // Physical/source positions deliberately disagree with the scroll allocations.
 for (const mode of ['length','equal']) {
   for (const reading of [false,true]) {
-    const {rail,view,scroller}=fixture(mode,reading);
+    const {rail,view,scroller,render}=fixture(mode,reading);
     for(let index=0;index<headings.length;index++) {
-      rail.activate(index);
+      rail.activate(index);render();flushFrame();flushFrame();
       assert.equal(rail.activeIndex,index,`${mode}/${reading?'reading':'source'}: clicked mark becomes current`);
       assert.equal(scroller.style.scrollBehavior,'smooth','Temporary instant scroll restores theme behavior');
-      assert.equal(view.jumpedLine,undefined,'Allocation navigation does not perform a conflicting source-line jump');
+      assert.equal(view.jumpedLine,undefined,'Measured headings go directly to the landing without a native double jump');
+      const landed=scroller.scrollTop;
+      rail.activate(index);render();flushFrame();flushFrame();
+      assert.equal(scroller.scrollTop,landed,'Repeated clicks retain the same final position');
+      assert.equal(view.jumpedLine,undefined,'Repeated clicks never reveal and correct again');
     }
     const before=scroller.scrollTop;rail.activate(-1);rail.activate(99);assert.equal(scroller.scrollTop,before);
   }
@@ -55,6 +60,64 @@ for (const mode of ['length','equal']) {
 for(const mode of ['position','off']) {
   const {rail,view}=fixture(mode);rail.activate(2);assert.equal(view.jumpedLine,80,'Physical navigation stays native');
   assert.equal(headingNavigationProgress(headingLines,100,mode,2),null);
+}
+// Landing preferences: remain in the active mark's range, preserve heading
+// visibility, and prefer a small gap above the heading rather than mid-section.
+const landing=(index,top,bottom,height=200)=>headingNavigationProgress([0,10,90],100,'length',index,
+  {scrollRange:1000,viewportHeight:height,headingTop:top,headingBottom:bottom,preferredTop:top,lastAtBottom:true})*1000;
+assert.equal(landing(1,100,124),100,'Long section lands at its heading, not its midpoint');
+assert.equal(landing(1,400,424),376,'Prefer 24px of breathing room when the range permits it');
+const nearBottom=headingNavigationProgress([0,25,50,75],100,'equal',1,
+  {scrollRange:1000,viewportHeight:400,headingTop:800,headingBottom:824,preferredTop:800,lastAtBottom:true})*1000;
+assert.equal(nearBottom,499,'Use the closest safe range edge when the heading cannot reach the top');
+assert.ok(800>=nearBottom && 824<=nearBottom+400,'The complete heading remains visible');
+assert.equal(headingNavigationProgress([0,25,50,75],100,'equal',1,
+  {scrollRange:1000,viewportHeight:100,headingTop:50,headingBottom:74,preferredTop:50,lastAtBottom:true}),0.25,
+  'When visibility and tracking cannot overlap, use the nearest range edge');
+for(const mode of ['length','equal'])for(let index=0;index<headingLines.length;index++) {
+  const progress=headingNavigationProgress(headingLines,100,mode,index,
+    {scrollRange:800,viewportHeight:200,headingTop:headingLines[index]*5,headingBottom:headingLines[index]*5+24,preferredTop:headingLines[index]*5,lastAtBottom:true});
+  assert.equal(context.module.exports.internals.resolveCurrent(headingLines,100,{...DEFAULTS,trackingMode:mode},
+    {progress,scrollable:true,atBottom:800-progress*800<=2,first:0}),index,'Landing remains active under the unchanged rule');
+}
+// Rendered section tracking uses the same top-aligned anchors for clicking,
+// scrolling and progress, independent of Markdown source-line proportions.
+{
+  const {headingLandingStarts,resolveCurrent,sectionProgress}=Plugin.internals;
+  const starts=headingLandingStarts([0,400,900,1300],1400);
+  assert.deepEqual(Array.from(starts),[0,376/1400,876/1400,1276/1400]);
+  const settings={...DEFAULTS,trackingMode:'length',lastAtBottom:false};
+  for(let index=0;index<starts.length;index++) {
+    const viewport={headingStarts:starts,progress:starts[index],scrollable:true,atBottom:false};
+    assert.equal(resolveCurrent(headingLines,100,settings,viewport),index);
+    assert.equal(sectionProgress(headingLines,100,settings,viewport,index),0);
+    if(index>0)assert.equal(resolveCurrent(headingLines,100,settings,{...viewport,progress:starts[index]-0.001}),index-1);
+  }
+  const trailing=headingLandingStarts([0,1000,1100,1200],1000);
+  assert.deepEqual(Array.from(trailing),[0,0.9,0.95,1]);
+  assert.ok(trailing.every((value,index)=>index===0||value>trailing[index-1]),'Trailing headings keep distinct attainable boundaries');
+  const empty=headingLandingStarts([0,500,530,560,1000],1200,400);
+  assert.deepEqual(Array.from(empty),[0,408/1200,472/1200,536/1200,976/1200]);
+  for(let index=1;index<4;index++) {
+    assert.ok((empty[index+1]-empty[index])*1200>=63.99,'Empty template headings receive useful scroll intervals');
+    assert.equal(resolveCurrent(headingLines.concat(99),100,settings,
+      {headingStarts:empty,progress:empty[index]+20/1200,scrollable:true,atBottom:false}),index);
+    assert.ok([0,500,530,560,1000][index]+24-empty[index]*1200<=400,'Borrowed range keeps the heading visible');
+  }
+}
+// Reading-mode virtualization preserves section offsets without mounted DOM.
+{
+  const {rail,view}=fixture('length',true);
+  delete rail.headingBounds;
+  const sections=headings.map((heading,index)=>({lineStart:heading.position.start.line,
+    lineEnd:heading.position.start.line,height:50,el:{querySelectorAll:()=>[]}}));
+  view.currentMode.renderer={sections,topSpace:12,getSectionTop:section=>sections.indexOf(section)*200};
+  assert.equal(rail.headingBounds(2).top,412);
+  assert.equal(rail.headingLandingStarts()[2],388/800);
+  view.currentMode.renderer.topSpace=32;
+  assert.equal(rail.headingLandingStarts()[2],408/800,'Layout changes update tracking boundaries');
+  const starts=Plugin.internals.headingLandingStarts([0,400.4,900.8],1000);
+  assert.equal(starts[1]*1000,377,'Fractional heading geometry rounds to a safe attainable scroll position');
 }
 const original=MarkdownView.prototype.setEphemeralState;
 for(const mode of ['length','equal']) {
@@ -84,7 +147,7 @@ for(const mode of ['length','equal']) {
     view.setEphemeralState({scroll:50});flushFrame();flushFrame();
     assert.equal(rail.activeIndex,1,'History restoration cancels a pending heading allocation');
     view.setEphemeralState({subpath:'#Heading 0'});render();
-    rail.activate(3);flushFrame();flushFrame();
+    rail.activate(3);render();flushFrame();flushFrame();
     assert.equal(rail.activeIndex,3,'A rail click supersedes a queued bookmark jump');
     const before=rail.activeIndex;
     view.setEphemeralState({subpath:'#^block-id'});render();flushFrame();flushFrame();assert.equal(rail.activeIndex,before);

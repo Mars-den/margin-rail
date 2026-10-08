@@ -76,7 +76,7 @@ function viewFixture(doc, name) {
   assert.equal(main.frames.size, 1); assert.equal(popout.frames.size, 1);
   main.flush(); popout.flush();
 
-  // Allocation tracking still avoids measuring renderer sections.
+  // Section tracking measures only the sections containing headings, once per frame.
   plugin.settings.trackingMode = "length";
   let measurements = 0, syncs = 0;
   one.currentMode.renderer.sections = Array.from({length: 5000}, (_, line) => ({ lineStart: line,
@@ -84,10 +84,10 @@ function viewFixture(doc, name) {
   const sync = a.syncActive.bind(a); a.syncActive = () => { syncs++; sync(); };
   for (let i = 0; i < 100; i++) a.onScroll();
   assert.equal(main.frames.size, 1); assert.equal(syncs, 0);
-  main.flush(); assert.equal(syncs, 1); assert.equal(measurements, 0);
-  plugin.settings.trackingMode = 'position'; a.onScroll(); main.flush(); assert.equal(measurements, 5000);
+  main.flush(); assert.equal(syncs, 1); assert.equal(measurements, 3);
+  plugin.settings.trackingMode = 'position'; a.onScroll(); main.flush(); assert.equal(measurements, 5003);
   measurements = 0; plugin.settings.trackingMode = 'length';
-  plugin.settings.activeMode = 'visible'; a.onScroll(); main.flush(); assert.equal(measurements, 5000);
+  plugin.settings.activeMode = 'visible'; a.onScroll(); main.flush(); assert.equal(measurements, 5003);
   plugin.settings.activeMode = 'single';
 
   // Mode switches rebind scrolling without rereading a note or replacing ticks.

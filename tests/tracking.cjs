@@ -47,6 +47,7 @@ for (const mode of ['position', 'length', 'equal', 'off']) {
   const rail = Object.create(DocumentRail.prototype);
   rail.plugin = { settings: settings(mode) };
   rail.headings = lines.map(line => ({ position: { start: { line } } }));
+  rail.headingBounds = index => ({top: lines[index]*8, bottom: lines[index]*8+24});
   rail.lines = Array(100).fill('');
   rail.scroller = { scrollTop: 400, scrollHeight: 1000, clientHeight: 200 };
   rail.visibleRange = () => [22, 90];
@@ -74,6 +75,7 @@ phone.view = { currentMode: readingMode, previewMode: readingMode,
   editor: { cm: sourceMode.cm }, containerEl: { querySelector() { throw Error('Prefer active-mode API'); } } };
 phone.plugin = { settings: settings('length') };
 phone.headings = lines.map(line => ({ position: { start: { line } } }));
+phone.headingBounds = index => ({top: lines[index]*8, bottom: lines[index]*8+24});
 phone.lines = Array(100).fill(''); phone.visibleRange = () => [0, 20];
 phone.scrollTopLine = () => 0; phone.paintProgress = () => {};
 phone.paintActive = (active, current) => { phone.current = current; };

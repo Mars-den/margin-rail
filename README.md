@@ -92,14 +92,26 @@ Choose a rule under **Behaviour → Scroll tracking** and try it with the previe
 | **Equal shares** | Every heading stays current for the same amount of scrolling. |
 | **No tracking** | Use the rail to navigate without highlighting a current heading. |
 
-With **By section length** or **Equal shares**, clicking a mark jumps into its
-assigned scroll share so that the clicked mark becomes current. Opening a heading
-bookmark from Obsidian, or following a heading link, uses that same allocation.
+With **By section length**, navigation places the heading 24px below the top of
+the note area when space allows. That same landing position starts its tracking
+range, which continues to the next heading’s landing position. Ranges follow the
+rendered layout, including wrapped text and images. Near the bottom, where a
+heading cannot reach the top, trailing ranges use the remaining scroll space.
+Short or empty sections borrow some scroll space from the preceding section,
+while keeping their headings visible. Their headings may therefore land lower. Very short notes may not have enough scroll space for distinct ranges.
+
+**Equal shares** keeps equal portions of the scroll range for each heading;
+navigation prefers showing the heading within its assigned portion.
+Opening a heading bookmark from Obsidian or following a heading link uses the
+same landing rule as clicking a mark.
 **Follow the note** and **No tracking** keep Obsidian’s exact heading jumps.
 
+Under **Behaviour → Heading navigation**, you can enable **Place cursor at heading**
+for editing mode and **Briefly highlight heading** for a fading destination highlight
+in either mode. Both are off by default and are independent of presets.
+
 **By section length** is the default for new installations. Existing saved choices
-are preserved. **By section length** counts lines of Markdown, including separate
-shares for nested headings, so resizing the window doesn’t change its allocation.
+are preserved. Nested headings each start their own range.
 
 **Finish on the last heading** highlights the final heading when you reach the
 bottom of a scrollable note. It works with any rule, including **No tracking**
