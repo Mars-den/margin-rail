@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '../..');
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, hasTouch: true });
     await page.setContent(`<style>
       :root { --text-normal:#ddd; --interactive-accent:#58aaff; --background-secondary:#333; --background-modifier-hover:rgb(50,60,70); --layer-popover:10; }
       body { background:#222; color:#ddd; } #host { position:relative; height:360px; width:700px; border:1px solid gray; }
@@ -87,7 +87,7 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.evaluate(() => {
       let prevented = false;
       rail.startDrag({button: 0, pointerType: 'touch', preventDefault() { prevented = true; }});
-      return rail.drag === null && !prevented;
+      return rail.drag === null && prevented;
     }), true);
     // Wheel browsing must expose the last heading and invalidate old hit targets.
     await page.evaluate(() => { rail.el.scrollTop = 0; });
@@ -324,6 +324,80 @@ const root = path.resolve(__dirname, '../..');
       await page.waitForTimeout(160);
       await page.screenshot({ path: process.env.RAIL_SCREENSHOT });
     }
+    // Real touch events exercise compatibility clicks and browser pan cancellation.
+    const touchSession = await page.context().newCDPSession(page);
+    await page.evaluate(() => {
+      rail.dismissKeyboard();
+      Object.assign(rail.settings, { hierarchyMode: 'nearby', idleLevels: 2, dragToScrub: true });
+      rail.render([1,2,3,3,2,3,3,2,3,1,2]);
+      window.touchActivations = [];
+      rail.activate = index => touchActivations.push(index);
+      window.mobilePulls = 0;
+      document.addEventListener('touchstart', event => {
+        // Same ancestor opt-out used by Obsidian's mobile swipe recognizer.
+        if (!event.target.closest('[data-ignore-swipe]')) mobilePulls++;
+      });
+    });
+    const touchPoint = () => page.evaluate(() => {
+      rail.measure();
+      const index = rail.centers.findIndex((center, i) => center != null && i > 0);
+      const box = rail.el.getBoundingClientRect();
+      return { x: box.left + box.width / 2, y: rail.centers[index], index };
+    });
+    for (const scrub of [true, false]) {
+      await page.evaluate(scrub => { rail.settings.dragToScrub = scrub; rail.updateSettings(); }, scrub);
+      for (let repeat = 0; repeat < 3; repeat++) {
+        const point = await touchPoint();
+        const before = await page.evaluate(() => touchActivations.length);
+        await page.touchscreen.tap(point.x, point.y);
+        await page.waitForTimeout(30);
+        assert.deepEqual(await page.evaluate(before => touchActivations.slice(before), before), [point.index],
+          'Touch taps choose the original visible mark once, without hover unfolding or a duplicate click');
+      }
+    }
+    await page.evaluate(() => { rail.settings.showBookmarkButton = true; rail.settings.dragToScrub = true; rail.updateSettings(); });
+    const actionPoint = await touchPoint();
+    await touchSession.send('Input.dispatchTouchEvent', {type:'touchStart', touchPoints:[{x:actionPoint.x,y:actionPoint.y}]});
+    await page.evaluate(() => rail.showFlyout(rail.drag.index));
+    assert.equal(await page.locator('.scrollspy-bookmark-button').isVisible(), false, 'Touch labels omit unreachable bookmark actions');
+    assert.equal(await page.evaluate(() => rail.flyout.classList.contains('has-bookmark-button')), false,
+      'Touch labels reserve no space or padding for the hidden action');
+    await touchSession.send('Input.dispatchTouchEvent', {type:'touchEnd', touchPoints:[]});
+    await page.mouse.move(950,650);
+    const pointerPoint = await touchPoint();
+    await page.mouse.move(pointerPoint.x,pointerPoint.y);
+    await page.waitForFunction(() => rail.flyout.classList.contains('is-visible'));
+    assert.equal(await page.locator('.scrollspy-bookmark-button').isVisible(), true, 'A connected pointer restores the action on the same tablet');
+    const pointerIndex = await page.evaluate(() => rail.flyoutIndex);
+    await page.locator('.scrollspy-bookmark-button').click();
+    assert.equal(await page.evaluate(() => window.bookmarkedIndex), pointerIndex);
+    await page.touchscreen.tap(pointerPoint.x,pointerPoint.y);
+    await page.locator('#before').focus(); await page.keyboard.press('Tab');
+    assert.equal(await page.locator('.scrollspy-bookmark-button').isVisible(), true, 'Keyboard navigation restores the action after touch');
+    await page.keyboard.press('Tab'); await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.bookmarkedIndex), await page.evaluate(() => rail.keyboardIndex));
+    await page.evaluate(() => { rail.dismissKeyboard(); rail.onLeave(); });
+    await page.evaluate(() => {
+      rail.settings.dragToScrub = true; rail.render(Array.from({length:200}, (_, i) => i % 6 + 1));
+      rail.el.scrollTop = 0; rail.centers = []; touchActivations.length = 0;
+    });
+    const densePoint = await touchPoint();
+    await page.touchscreen.tap(densePoint.x, densePoint.y);
+    assert.deepEqual(await page.evaluate(() => touchActivations), [densePoint.index]);
+    await page.evaluate(() => touchActivations.length = 0);
+    const pan = await touchPoint();
+    await touchSession.send('Input.dispatchTouchEvent', {type:'touchStart', touchPoints:[{x:pan.x,y:pan.y+80}]});
+    for (let distance = 10; distance <= 70; distance += 10) {
+      await touchSession.send('Input.dispatchTouchEvent', {type:'touchMove', touchPoints:[{x:pan.x,y:pan.y+80-distance}]});
+      await page.waitForTimeout(20);
+    }
+    await touchSession.send('Input.dispatchTouchEvent', {type:'touchEnd', touchPoints:[]});
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(() => rail.el.scrollTop > 0), true, 'Dense touch swipes retain native outline scrolling');
+    assert.deepEqual(await page.evaluate(() => touchActivations), [], 'Browsing an outline must not navigate the note');
+    assert.equal(await page.evaluate(() => mobilePulls), 0, 'Rail touches opt out of Obsidian pull commands');
+    assert.equal(await page.evaluate(() => rail.flyout.dataset.ignoreSwipe), 'true');
+    await touchSession.detach();
     await page.evaluate(() => rail.destroy());
     assert.equal(await page.locator('[id$="-label"]').count(), 0, 'Accessible names are removed on unload');
     // Real DocumentRail navigation against a browser scroll container, with
@@ -396,6 +470,77 @@ const root = path.resolve(__dirname, '../..');
           }
         }
       }
+      for(const hover of ['pill','dot']) {
+        const hoverLayout=await page.evaluate(hover=>{
+          documentRail.plugin.settings.hoverStyle=hover;documentRail.updateSettings();
+          documentRail.measure();const before=[...documentRail.centers];
+          documentRail.setHovered(1);
+          return {before};
+        },hover);
+        await page.waitForTimeout(250);
+        const after=await page.evaluate(()=>{documentRail.measure();return [...documentRail.centers];});
+        after.forEach((center,index)=>assert.ok(Math.abs(center-hoverLayout.before[index])<1,`${hover}: growing a mark keeps all cursor targets fixed`));
+      }
+      await page.evaluate(()=>{documentRail.plugin.settings.hoverStyle='none';documentRail.updateSettings();});
+      await page.evaluate(()=>{
+        window.hapticEvents=[];
+        window.hapticHeadings=[];
+        documentRail.plugin.settings.labelMoveMotion='slide';
+        window.testDragNow=0;documentRail.dragNow=()=>testDragNow;
+        documentRail.plugin.beginDragHaptics=()=>hapticEvents.push('begin');
+        documentRail.plugin.tickDragHaptics=()=>{hapticEvents.push('tick');hapticHeadings.push(documentRail.dragSectionIndex());};
+        documentRail.plugin.endDragHaptics=()=>hapticEvents.push('end');
+      });
+      // Unequal sections still select the mark under the drag cursor, with a
+      // matching label and no between-mark animation lag.
+      const firstMark=await page.locator('[role="option"]').first().boundingBox();
+      const smallRail=await page.locator('[role="listbox"]').boundingBox();
+      await page.mouse.move(smallRail.x+smallRail.width/2,firstMark.y+firstMark.height/2);
+      await page.mouse.down();
+      for(const index of [1,2,1,3]) {
+        await page.evaluate(()=>testDragNow+=1000);
+        const mark=await page.locator('[role="option"]').nth(index).boundingBox();
+        const y=mark.y+mark.height/2;
+        await page.mouse.move(smallRail.x+smallRail.width/2,y);
+        await page.waitForFunction(index=>documentRail.activeIndex===index,index);
+        const aligned=await page.evaluate(y=>({current:documentRail.activeIndex,hover:documentRail.hoveredIndex,
+          label:documentRail.flyoutIndex,nearest:documentRail.nearestIndex(y),animations:documentRail.labelAnimations.length,
+          tick:hapticHeadings.at(-1),snap:!!documentRail.dragSnapAnimation}),y);
+        assert.equal(aligned.hover,index);assert.equal(aligned.label,index);assert.equal(aligned.nearest,index);
+        assert.equal(aligned.tick,index,'Haptic tick identifies the same heading as the cursor and label');
+        assert.equal(aligned.animations,0,'Dragging labels do not glide behind their selected mark');
+        assert.equal(aligned.snap,true,'Section crossing provides visual snap feedback');
+      }
+      await page.mouse.up();
+      // Fast skimming drops the holds and feedback but retains alignment.
+      await page.evaluate(()=>{hapticEvents=[];hapticHeadings=[];});
+      await page.mouse.move(smallRail.x+smallRail.width/2,firstMark.y+firstMark.height/2);
+      await page.mouse.down();
+      await page.evaluate(()=>testDragNow+=10);
+      const fastMark=await page.locator('[role="option"]').nth(2).boundingBox();
+      const fastY=fastMark.y+fastMark.height/2;
+      await page.mouse.move(smallRail.x+smallRail.width/2,fastY);
+      await page.waitForFunction(()=>documentRail.activeIndex===2);
+      const fast=await page.evaluate(()=>({strength:documentRail.drag.strength,hover:documentRail.hoveredIndex,
+        label:documentRail.flyoutIndex,ticks:hapticHeadings.length,pulse:!!documentRail.dragSnapAnimation,progress:noteScroller.scrollTop}));
+      assert.equal(fast.strength,0,'Fast dragging removes the hold');
+      assert.equal(fast.hover,2);assert.equal(fast.label,2);assert.equal(fast.ticks,0);assert.equal(fast.pulse,false);
+      await page.evaluate(()=>testDragNow+=1500);
+      await page.mouse.up();
+      assert.equal(await page.evaluate(()=>noteScroller.scrollTop),fast.progress,'Releasing after a fast drag does not jump back as snapping restores');
+      await page.evaluate(()=>{delete documentRail.dragNow;hapticEvents=[];hapticHeadings=[];});
+      const dragBox=await page.locator('[role="listbox"]').boundingBox();
+      await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+2);
+      await page.mouse.down();
+      await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height-2,{steps:12});
+      await page.mouse.up();
+      const haptics=await page.evaluate(()=>hapticEvents);
+      assert.equal(haptics[0],'begin','Actual pointer drag starts haptics');
+      assert.ok(haptics.every(event=>['begin','tick','end'].includes(event)),'Fast pointer drag keeps feedback events bounded');
+      assert.equal(haptics.at(-1),'end','Pointer release stops haptics');
+      const tickCount=haptics.filter(event=>event==='tick').length;
+      await page.evaluate(()=>{documentRail.scrubTo(.5);documentRail.activate(1);});
+      assert.equal(await page.evaluate(()=>hapticEvents.filter(event=>event==='tick').length),tickCount,'Non-drag scrolling and heading clicks add no haptics');
       await page.evaluate(()=>{
         documentRail.plugin.settings.trackingMode='length';
         headingEls.forEach((heading,index)=>heading.style.top=`${[180,800,830,860][index]}px`);
@@ -450,6 +595,36 @@ const root = path.resolve(__dirname, '../..');
       await page.evaluate(()=>{noteScroller.scrollTop-=10;noteScroller.dispatchEvent(new Event('scroll'));});
       assert.equal(await page.locator('.scrollspy-heading-flash').count(),0,'Scrolling dismisses feedback that would otherwise float over unrelated content');
       await page.evaluate(()=>documentRail.activate(1));
+      await page.evaluate(()=>{
+        documentRail.plugin.settings.placeCursorOnNavigate=false;
+        documentRail.plugin.settings.highlightOnNavigate=false;
+        const body=noteScroller.firstElementChild;body.replaceChildren();body.style.height='20000px';
+        const headings=Array.from({length:200},(_,index)=>({heading:`Long ${index}`,level:index%4?2:1,position:{start:{line:index*5}}}));
+        const elements=headings.map((heading,index)=>{
+          const el=body.createEl('h2',{text:heading.heading});Object.assign(el.style,{position:'absolute',top:`${index*100}px`,height:'28px',margin:'0'});return el;
+        });
+        const mode=navigationView.currentMode;
+        if(mode.cm){mode.cm.state.doc.lines=1000;mode.cm.lineBlockAt=position=>({top:position*20,height:28});}
+        else mode.renderer.sections=headings.map((heading,index)=>({lineStart:heading.position.start.line,lineEnd:heading.position.start.line,el:{querySelectorAll:()=>[elements[index]]}}));
+        documentRail.headings=headings;documentRail.lines=Array(1000).fill('');
+        documentRail.plugin.settings.hierarchyMode='nearby';documentRail.plugin.settings.idleLevels=1;
+        documentRail.render(headings.map(heading=>heading.level));documentRail.syncActive();
+      });
+      const denseRail=await page.locator('[role="listbox"]').boundingBox();
+      await page.mouse.move(denseRail.x+denseRail.width/2,denseRail.y+15);
+      await page.mouse.down();
+      for(const fraction of [.4,.7,.3]) {
+        const box=await page.locator('[role="listbox"]').boundingBox(),y=box.y+box.height*fraction;
+        await page.mouse.move(box.x+box.width/2,y);
+        await page.waitForTimeout(30);
+        const denseAligned=await page.evaluate(y=>({current:documentRail.activeIndex,label:documentRail.flyoutIndex,
+          hover:documentRail.hoveredIndex,nearest:documentRail.nearestIndex(y),hidden:documentRail.el.children[documentRail.activeIndex]?.hidden}),y);
+        assert.equal(denseAligned.label,denseAligned.current,'Dense outline label follows the tracked section');
+        assert.equal(denseAligned.hover,denseAligned.current);
+        assert.equal(denseAligned.nearest,denseAligned.current,'Dense outline keeps the selected mark under the drag cursor');
+        assert.equal(denseAligned.hidden,false,'Folded headings are available as drag targets');
+      }
+      await page.mouse.up();
       await page.evaluate(()=>{navigationCleanup.forEach(fn=>fn());documentRail.destroy();noteScroller.remove();});
       assert.equal(await page.locator('.scrollspy-heading-flash').count(),0,'Destroy removes destination feedback and its timer');
     }

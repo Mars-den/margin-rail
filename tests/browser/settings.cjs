@@ -64,7 +64,8 @@ const root = path.resolve(__dirname, '../..');
         showAtMouseEvent(){const menu=document.body.createDiv();menu.setAttribute('role','menu');for(const item of this.items){const b=menu.createEl('button',{text:item.title});b.setAttribute('role','menuitem');b.onclick=()=>{menu.remove();item.click();};}}
       }
       window.module = {exports:{}};
-      window.require = () => ({Plugin:class {}, PluginSettingTab:class {constructor(){this.containerEl=document.querySelector('#settings');}},Setting,Menu,Notice:class {},setIcon(){}});
+      window.testPlatform={isMacOS:true,isDesktopApp:true};
+      window.require = () => ({Platform:testPlatform,Plugin:class {}, PluginSettingTab:class {constructor(){this.containerEl=document.querySelector('#settings');}},Setting,Menu,Notice:class {},setIcon(){}});
     });
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'main.js'), 'utf8') + '\nwindow.settingsAPI={ScrollspySettingTab,DEFAULTS,SESSION_DEFAULTS};' });
     await page.evaluate(() => {
@@ -90,6 +91,14 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.locator('.scrollspy-preset-update').isVisible(),false);
     assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Rail','Behaviour','Labels','Placement']);
     assert.equal(await page.getByRole('tab', {name:'Behaviour',exact:true}).getAttribute('aria-selected'), 'true');
+    const hapticToggle=page.locator('.setting-item').filter({has:page.getByText('Haptic ticks while dragging',{exact:true})}).locator('input[type=checkbox]');
+    assert.equal(await hapticToggle.isChecked(),false,'Mac haptics default off');
+    await hapticToggle.check();
+    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
+    assert.equal(await page.evaluate(()=>plugin.settings.activePreset),'default','Device preference does not create an unsaved preset');
+    await page.evaluate(()=>{testPlatform.isMacOS=false;tab.display();});
+    assert.equal(await page.getByText('Haptic ticks while dragging',{exact:true}).count(),0,'Other platforms do not show Mac haptics');
+    await page.evaluate(()=>{testPlatform.isMacOS=true;tab.display();});
     await page.locator('select[data-setting="hoverStyle"]').selectOption('pill');
     assert.equal(await page.evaluate(() => document.activeElement.dataset.setting), 'hoverStyle');
     assert.equal(await page.locator('.scrollspy-panel').getByText('Opened thickness',{exact:true}).count(),1);
@@ -99,6 +108,7 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.getByRole('slider',{name:'Pointer nearby',exact:true}).getAttribute('aria-valuetext'),'25%');
     await page.locator('.scrollspy-settings-header select').selectOption('builtin-absolutely');
     assert.equal(await page.evaluate(() => plugin.settings.side),'left');
+    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true,'Preset changes preserve the haptics preference');
     // Built-in starting points are updateable even without any saved presets.
     for(const value of ['19','20','21','22'])await page.getByRole('slider',{name:'Length',exact:true}).fill(value);
     assert.equal(await page.locator('.scrollspy-settings-header option[value=custom]').count(),1);

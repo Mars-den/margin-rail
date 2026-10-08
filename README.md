@@ -110,6 +110,29 @@ Under **Behaviour → Heading navigation**, you can enable **Place cursor at hea
 for editing mode and **Briefly highlight heading** for a fading destination highlight
 in either mode. Both are off by default and are independent of presets.
 
+On Mac, **Haptic ticks while dragging** adds subtle trackpad feedback when a rail
+drag crosses a section boundary. It is off by default, stays independent of
+presets, and adds no feedback to clicks or ordinary scrolling. Requires a
+compatible Force Touch or Magic Trackpad with system haptics enabled. A small
+helper uses macOS’s built-in `osascript` and AppKit only during a drag; no extra
+binary or installation is required. Fast crossings are rate limited rather than
+queued. This option does not change phone behaviour.
+
+While dragging with section-length or equal-share tracking, each mark’s pointer
+area maps to that heading’s scroll range. The label follows the selected section
+without animation lag, and each crossing has a brief landing detent and a small
+mark pulse. Fast dragging smoothly reduces the heading holds, pulses and haptic
+ticks; slowing down restores them without pulling the note backwards. Speed is
+measured in marks per second so rail spacing does not change the feel.
+Dense outlines bring the selected mark beneath the cursor; folded
+headings remain reachable during the drag. Reduced motion disables the pulse.
+
+On touchscreens, taps select the mark originally pressed and long outlines scroll
+with a native swipe. Rail gestures do not trigger Obsidian’s pull-down command.
+Touch labels omit the quick bookmark button; using a mouse, trackpad, or keyboard
+restores it, including on iPad. Heading navigation uses precise pixel landings so
+closely spaced headings activate their own marks.
+
 **By section length** is the default for new installations. Existing saved choices
 are preserved. Nested headings each start their own range.
 
@@ -155,7 +178,9 @@ these features.
 Plain JavaScript and CSS; no build step. Run `node scripts/verify.cjs` for all
 checks. Optional browser layout and interaction checks use Playwright with an
 installed Chromium: `node tests/browser/navigation.cjs`. Set `PLAYWRIGHT_MODULE`
-to its module path if it is not installed locally. To release, commit on the branch tracking `origin/main`, then run
+to its module path if it is not installed locally. Touch regressions run in Chromium
+and WebKit with `node tests/browser/touch.cjs` (install both Playwright browsers).
+To release, commit on the branch tracking `origin/main`, then run
 `node scripts/release.cjs <next-version>`. GitHub Actions checks, attests, and
 publishes the plugin files.
 

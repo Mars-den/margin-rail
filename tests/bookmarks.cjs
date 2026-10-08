@@ -5,7 +5,7 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../main.js'
 let pending = null;
 let hasBookmarkCheck = false;
 let paintedIcon;
-const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {}, setIcon(el, icon) { paintedIcon = icon; }, getIcon() { return hasBookmarkCheck ? {} : null; } }),
+const context = { require: () => ({ Plugin: class {}, PluginSettingTab: class {}, setIcon(el, icon) { paintedIcon = icon; }, getIcon(name) { return name === 'bookmark-minus' || name === 'bookmark-plus' || name === 'bookmark' || (hasBookmarkCheck && name === 'bookmark-check') ? {} : null; } }),
   module: { exports: {} }, cancelAnimationFrame() {}, setTimeout(fn) { pending = fn; return 1; }, clearTimeout() { pending = null; } };
 vm.createContext(context);
 vm.runInContext(source + '\nmodule.exports = {headingSubpath, findHeadingBookmark, bookmarksCore, DocumentRail, RailView};', context);

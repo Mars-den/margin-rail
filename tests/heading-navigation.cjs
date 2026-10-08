@@ -105,6 +105,30 @@ for(const mode of ['length','equal'])for(let index=0;index<headingLines.length;i
     assert.ok([0,500,530,560,1000][index]+24-empty[index]*1200<=400,'Borrowed range keeps the heading visible');
   }
 }
+// Consecutive headings at the start trade breathing room for distinct ranges.
+{
+  const {headingLandingStarts,resolveCurrent}=Plugin.internals;
+  for (const tops of [[0,18,36,1000],[0,21.5,43,1000]]) {
+    const starts=headingLandingStarts(tops,1200,300);
+    starts.forEach((start,index)=>{
+      if(index) assert.ok(start>starts[index-1],'Adjacent leading headings have distinct ranges');
+      assert.ok(start*1200<=tops[index],'A leading heading stays visible');
+      assert.equal(resolveCurrent([0,1,2,50],100,{...DEFAULTS,trackingMode:'length',lastAtBottom:false},
+        {headingStarts:starts,progress:start,scrollable:true,atBottom:false}),index);
+    });
+  }
+}
+// Model WebKit flooring scrollTop: integer landing survives normalization.
+for (const mode of ['length','equal']) {
+  const {rail,scroller}=fixture(mode);
+  scroller.scrollHeight=1203;
+  let top=0;
+  Object.defineProperty(scroller,'scrollTop',{get:()=>top,set:value=>top=Math.floor(value)});
+  for(let pixel=1;pixel<1000;pixel++) {
+    rail.scrubTo(pixel/1003,true);
+    assert.equal(scroller.scrollTop,pixel,`${mode}: exact landing pixel ${pixel}`);
+  }
+}
 // Reading-mode virtualization preserves section offsets without mounted DOM.
 {
   const {rail,view}=fixture('length',true);

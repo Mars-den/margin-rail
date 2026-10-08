@@ -38,9 +38,9 @@ function rail() {
   r.plugin = { settings: { ...DEFAULTS, hierarchyMode: 'all' } };
   r.levels = [1, 2, 2]; r.centers = []; r.waveFrame = 0; r.drag = null;
   r.activeIndex = 0; r.expandedBranch = -1; r.hoveredIndex = -1;
-  r.flyout = { toggleClass() {} };
+  r.flyout = { toggleClass() {}, addClass() {}, removeClass() {} };
   r.el = { children: [tick(100), tick(200), tick(300)], style: style(),
-    addClass() {}, removeClass() {}, capture: null,
+    addClass() {}, removeClass() {}, toggleClass() {}, capture: null,
     setPointerCapture(id) { this.capture = id; }, hasPointerCapture(id) { return this.capture === id; },
     releasePointerCapture() { this.capture = null; }, getBoundingClientRect: () => ({ top: 90, bottom: 310 }) };
   r.scrubbed = []; r.activated = [];

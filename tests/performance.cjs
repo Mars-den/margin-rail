@@ -21,7 +21,10 @@ function style() {
 }
 function documentFixture() {
   const frames = new Map(); let frameId = 0;
-  const doc = { frames, defaultView: {
+  const listeners = new Set();
+  const doc = { frames, listeners,
+    addEventListener(type, fn) { listeners.add(fn); },
+    removeEventListener(type, fn) { listeners.delete(fn); }, defaultView: {
     requestAnimationFrame(fn) { frames.set(++frameId, fn); return frameId; },
     cancelAnimationFrame(id) { frames.delete(id); }, matchMedia() { return { matches: false }; }
   }, body: { style: style() } };
@@ -135,6 +138,7 @@ function viewFixture(doc, name) {
   assert.equal(saved.length, 2); assert.equal(saved[1].tickWidth, 70);
   assert.equal(timers.size, 0); assert.equal(main.frames.size, 0); assert.equal(popout.frames.size, 0);
   assert.equal(plugin.rails.size, 0);
+  assert.equal(main.listeners.size, 0); assert.equal(popout.listeners.size, 0);
   for (const rail of [a,b]) {
     assert.equal(rail.el.removed, true); assert.equal(rail.flyout.removed, true);
     assert.equal(rail.host.classList.contains('margin-rail-host'), false);

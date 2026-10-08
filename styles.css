@@ -39,6 +39,7 @@
   padding-block: 10px;
   pointer-events: auto;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .scrollspy-rail.is-hidden,
@@ -80,6 +81,7 @@
 }
 /* Electron and iOS WebKit support this without the newer scrollbar-width API. */
 .scrollspy-rail.is-dense::-webkit-scrollbar { display: none; }
+.scrollspy-rail.is-dense,
 .scrollspy-rail.is-dense.can-scrub { touch-action: pan-y; }
 .scrollspy-rail.is-dense .scrollspy-tick { min-height: 24px; box-sizing: border-box; align-items: center; }
 .scrollspy-rail:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
@@ -93,6 +95,9 @@
   display: flex;
   flex-shrink: 0;
   padding-block: 3px;
+  box-sizing: border-box;
+  height: calc(var(--ss-tick-height, 5px) + 6px);
+  align-items: center;
 }
 
 .scrollspy-mark {
@@ -559,7 +564,7 @@
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
 }
-.scrollspy-bookmark-button svg { width: 16px; height: 16px; }
+.scrollspy-flyout .scrollspy-bookmark-button svg { display: block; width: 16px; height: 16px; flex-shrink: 0; pointer-events: none; }
 
 /* Bookmark dots sit toward the note and do not change tick spacing or targets. */
 .scrollspy-tick { position: relative; }
@@ -636,3 +641,8 @@
 @media (prefers-reduced-motion: reduce) {
   .scrollspy-heading-flash { animation: none; }
 }
+
+/* Drag feedback follows the selected section immediately. */
+.scrollspy-flyout.is-scrubbing { transition: none; }
+.scrollspy-rail.is-dragging .scrollspy-mark { transform-origin: right center; }
+.scrollspy-rail.is-dragging.is-left .scrollspy-mark { transform-origin: left center; }

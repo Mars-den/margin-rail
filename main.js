@@ -120,6 +120,7 @@ const SESSION_DEFAULTS = {
   phoneVisibility: "hidden", // hidden | landscape | always; independent of presets
   placeCursorOnNavigate: false,
   highlightOnNavigate: false,
+  macDragHaptics: false,
 };
 
 const PRESET_KEYS = Object.keys(DEFAULTS);
@@ -188,7 +189,9 @@ function headingLandingStarts(tops, scrollRange, viewportHeight = 200, bottoms =
   let step = Math.min(64, viewportHeight / 4, scrollRange / Math.max(1, tops.length - 1));
   for (let i = 0; i < tops.length; i++) {
     // Never move a landing past its heading, or so far back it leaves the screen.
-    if (i) step = Math.min(step, starts[i] / i);
+    // Near the start, reduce the preferred 24px inset before sacrificing a
+    // heading's entire range (e.g. consecutive H1/H2 lines in the editor).
+    if (i) step = Math.min(step, Math.max(0, tops[i]) / i);
     const remaining = tops.length - 1 - i;
     if (remaining) step = Math.min(step, Math.max(0, scrollRange - Math.max(0, bottoms[i] - viewportHeight)) / remaining);
   }
@@ -302,6 +305,41 @@ function scrubProgress(clientY, start, end) {
   return clampProgress((clientY - start) / Math.max(1, end - start));
 }
 
+// Each visible mark owns the pointer band halfway to its neighbours. Map that
+// band to the same scroll interval that makes this heading current.
+function sectionDragProgress(clientY, centers, ranges, start, end, strength = 1) {
+  if (!ranges || centers.some(center => center == null) || centers.length !== ranges.length) {
+    return scrubProgress(clientY, start, end);
+  }
+  let index = centers.findIndex((center, i) => clientY < (center + (centers[i + 1] ?? Infinity)) / 2);
+  if (index < 0) index = centers.length - 1;
+  const low = index ? (centers[index - 1] + centers[index]) / 2 : start;
+  const high = index + 1 < centers.length ? (centers[index] + centers[index + 1]) / 2 : end;
+  const fraction = scrubProgress(clientY, low, high);
+  // Briefly hold the heading's landing at the entrance to its band. This gives
+  // each crossing a small detent without delaying or animating the scroll.
+  const hold = 0.15 * strength;
+  const within = fraction < hold ? 0 : (fraction - hold) / (1 - hold);
+  return ranges[index].start + (ranges[index].end - ranges[index].start) * within;
+}
+
+// Speeds are measured in marks per second, independent of rail spacing.
+function dragSnapStrength(speed) {
+  const blend = clampProgress((speed - 2) / 6);
+  return 1 - blend * blend * (3 - 2 * blend);
+}
+
+function sampleDragSpeed(motion, position, time) {
+  const elapsed = Math.max(1, time - motion.time);
+  const speed = Math.abs(position - motion.position) * 1000 / elapsed;
+  // Respond promptly to acceleration; restore detents more gently on slowing.
+  const blend = 1 - Math.exp(-elapsed / (speed > motion.speed ? 60 : 180));
+  motion.speed += (speed - motion.speed) * blend;
+  motion.position = position;
+  motion.time = time;
+  return dragSnapStrength(motion.speed);
+}
+
 // Match the heading subpath used by Obsidian's own heading bookmarks.
 function headingSubpath(title) {
   return "#" + title.replace(/([:#|^\\\r\n]|%%|\[\[|]])/g, " ").replace(/\s+/g, " ").trim();
@@ -328,6 +366,88 @@ function bookmarksCore(app) {
 /* ========================================================== shared rail === */
 
 let nextRailId = 0;
+
+// A small, fixed JXA program accesses AppKit through macOS's own runtime.
+// It receives only tick bytes, never note text, paths, or executable commands.
+const MAC_HAPTIC_SCRIPT = String.raw`
+ObjC.import("AppKit");
+var input = $.NSFileHandle.fileHandleWithStandardInput;
+var output = $.NSFileHandle.fileHandleWithStandardOutput;
+output.writeData($("ready\n").dataUsingEncoding($.NSUTF8StringEncoding));
+while (true) {
+  var data = input.readDataOfLength(1);
+  if (!data.length) break;
+  $.NSHapticFeedbackManager.defaultPerformer.performFeedbackPatternPerformanceTime(
+    $.NSHapticFeedbackPatternAlignment, $.NSHapticFeedbackPerformanceTimeNow);
+}
+`;
+
+class MacDragHaptics {
+  constructor(spawn, now = () => Date.now()) {
+    this.spawn = spawn;
+    this.now = now;
+    this.child = null;
+    this.owner = null;
+    this.failed = false;
+  }
+
+  begin(owner) {
+    this.end();
+    if (this.failed) return;
+    this.owner = owner;
+    this.ready = false;
+    this.lastTick = -Infinity;
+    try {
+      const child = this.child = this.spawn("/usr/bin/osascript", ["-l", "JavaScript", "-e", MAC_HAPTIC_SCRIPT],
+        { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+      let output = "";
+      child.stdout.on("data", data => {
+        if (this.child !== child) return;
+        output += data.toString();
+        if (output.includes("ready\n")) {
+          this.ready = true;
+          clearTimeout(this.startupTimer);
+          this.startupTimer = null;
+        }
+      });
+      const fail = () => {
+        if (this.child !== child) return;
+        this.failed = true;
+        this.end();
+      };
+      child.on("error", fail);
+      child.on("exit", fail);
+      child.stdin.on("error", fail);
+      this.startupTimer = setTimeout(fail, 2000);
+    } catch (_) {
+      this.failed = true;
+      this.end();
+    }
+  }
+
+  tick(owner) {
+    if (owner !== this.owner || !this.ready || !this.child?.stdin.writable) return;
+    const now = this.now();
+    if (now - this.lastTick < 80 || this.child.stdin.writableLength) return;
+    this.lastTick = now;
+    try { this.child.stdin.write("t"); }
+    catch (_) { this.failed = true; this.end(); }
+  }
+
+  end(owner) {
+    if (owner && owner !== this.owner) return;
+    clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+    const child = this.child;
+    this.child = null;
+    this.owner = null;
+    this.ready = false;
+    if (child) {
+      child.stdin.destroy();
+      child.kill();
+    }
+  }
+}
 
 class RailView {
   constructor(plugin, hostEl) {
@@ -357,6 +477,8 @@ class RailView {
     this.ownsHostClass = !hostEl.classList.contains("margin-rail-host");
     hostEl.classList.add("margin-rail-host");
     this.el = hostEl.createDiv({ cls: "scrollspy-rail" });
+    // Obsidian's mobile gesture recognizer honours this on ancestors.
+    this.el.dataset.ignoreSwipe = "true";
     this.el.tabIndex = 0;
     this.el.setAttribute("role", "listbox");
     // Obsidian turns aria-label into a pointer tooltip. A referenced name keeps
@@ -367,7 +489,15 @@ class RailView {
     this.el.setAttribute("aria-labelledby", this.accessibleLabel.id);
     this.el.setAttribute("aria-orientation", "vertical");
     this.el.setAttribute("aria-description", "Arrow keys select a heading, Home and End select the first and last. Enter jumps. Escape dismisses. Scroll to browse long outlines.");
+    // Focus can arrive after touch release on WebKit. Only a real keyboard
+    // Tab should turn a touch-focused list into an expanded keyboard outline.
+    this.onKeyboardIntent = event => {
+      if (event.key === "Tab") this.setInputMode("keyboard");
+    };
+    hostEl.ownerDocument.addEventListener("keydown", this.onKeyboardIntent, true);
     this.el.addEventListener("focus", () => {
+      if (this.touch || this.drag?.pointerType === "touch" || this.inputMode === "touch") return;
+      this.setInputMode("keyboard");
       this.cancelLeave();
       this.flyoutPointerFocus = false;
       this.keyboardFocused = true;
@@ -383,6 +513,8 @@ class RailView {
     }, { passive: false });
     this.el.addEventListener("scroll", () => {
       this.centers = [];
+      if (this.touch) this.touch.moved = true;
+      if (this.drag?.moved) { this.updateDragFeedback(this.dragSectionIndex()); return; }
       if (this.keyboardFocused && this.keyboardIndex >= 0) this.showFlyout(this.keyboardIndex);
       else { this.setHovered(-1); this.hideFlyout(); }
     });
@@ -390,13 +522,14 @@ class RailView {
     // The label lives outside the rail so the rail never needs a background of
     // its own -- the hover chrome belongs to the label, not to the bars.
     this.flyout = hostEl.createDiv({ cls: "scrollspy-flyout" });
+    this.flyout.dataset.ignoreSwipe = "true";
     this.flyoutHead = this.flyout.createDiv({ cls: "scrollspy-flyout-head" });
     this.flyoutTitle = this.flyoutHead.createSpan({ cls: "scrollspy-flyout-title" });
     this.flyoutPercent = this.flyoutHead.createSpan({
       cls: "scrollspy-flyout-percent",
     });
     this.flyoutBookmark = this.flyoutHead.createEl("button", {
-      cls: "scrollspy-bookmark-button", type: "button",
+      cls: "scrollspy-bookmark-button clickable-icon", type: "button",
     });
     this.flyoutBookmark.addEventListener("click", async (evt) => {
       evt.stopPropagation();
@@ -410,7 +543,12 @@ class RailView {
       catch (error) { new Notice("Could not bookmark this heading. Try again from Obsidian’s Bookmarks."); }
       finally { this.bookmarkBusy = false; this.paintBookmarks(); this.updateBookmarkButton(); }
     });
-    this.flyout.addEventListener("pointerdown", () => { this.flyoutPointerFocus = true; });
+    this.flyout.addEventListener("pointerdown", evt => {
+      this.flyoutPointerFocus = true;
+      // WebKit can blur the rail to the page instead of focusing a clicked
+      // button. Keep focus in place so blur cannot dismiss it before click.
+      if (evt.target.closest?.(".scrollspy-bookmark-button")) evt.preventDefault();
+    });
     this.flyout.addEventListener("pointerenter", () => { this.overFlyout = true; this.cancelHoverFrame(); this.cancelLeave(); });
     this.flyout.addEventListener("pointerleave", () => { this.overFlyout = false; this.scheduleLeave(); });
     this.flyout.addEventListener("focusin", () => this.cancelLeave());
@@ -435,10 +573,15 @@ class RailView {
     // against individual bars. A 5px bar is a bad target; the band around it is
     // a good one, and nearest-centre makes the gaps between bars live too.
     this.el.addEventListener("click", (evt) => {
+      // Touch activation belongs exclusively to pointerup. Compatibility clicks
+      // can arrive after another tap, when a one-click suppression flag is reset.
+      if (this.inputMode === "touch" || evt.pointerType === "touch" || evt.sourceCapabilities?.firesTouchEvents) return;
       if (this.suppressClick) { this.suppressClick = false; return; }
       this.activate(this.nearestIndex(evt.clientY));
     });
     this.el.addEventListener("pointerenter", (evt) => {
+      if (evt.pointerType === "touch") return;
+      this.setInputMode(evt.pointerType || "mouse");
       this.cancelLeave();
       this.lastPointerX = evt.clientX;
       this.lastPointerY = evt.clientY;
@@ -446,17 +589,20 @@ class RailView {
       this.revealAt(evt.clientY);
     });
     this.el.addEventListener("pointermove", (evt) => this.onPointerMove(evt));
-    this.el.addEventListener("pointerleave", () => { if (!this.drag) this.scheduleLeave(); });
+    this.el.addEventListener("pointerleave", (evt) => { if (evt.pointerType !== "touch" && !this.drag) this.scheduleLeave(); });
     this.el.addEventListener("pointerdown", (evt) => this.startDrag(evt));
     this.el.addEventListener("pointerup", (evt) => this.endDrag(evt));
     this.el.addEventListener("pointercancel", (evt) => this.endDrag(evt, true));
     this.el.addEventListener("lostpointercapture", (evt) => {
-      if (this.drag) this.endDrag(evt, true);
+      if (this.drag || this.touch) this.endDrag(evt, true);
     });
     this.plugin.applyStyles(this);
   }
 
   destroy() {
+    this.host.ownerDocument.removeEventListener("keydown", this.onKeyboardIntent, true);
+    this.plugin.endDragHaptics?.(this);
+    this.dragSnapAnimation?.cancel();
     this.cancelLabelMotion();
     if (this.ownsHostClass) this.host.classList.remove("margin-rail-host");
     this.cancelLeave();
@@ -509,18 +655,47 @@ class RailView {
     } else leave();
   }
 
+  setInputMode(mode) {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    if (this.flyoutBookmark) this.updateBookmarkButton();
+  }
+
   updateBookmarkButton() {
-    const visible = this.settings.showBookmarkButton;
+    // Touch labels describe the drag target and close on release. Pointer and
+    // keyboard labels stay actionable, including on hybrid tablets.
+    const visible = this.settings.showBookmarkButton && this.inputMode !== "touch";
     this.flyoutBookmark.toggleClass("is-hidden", !visible);
     this.flyout.toggleClass("has-bookmark-button", visible);
     if (!visible) return;
     const state = this.bookmarkState(this.flyoutIndex);
     const title = state.saved ? "Remove heading bookmark" : state.available
       ? "Bookmark this heading" : "Enable Obsidian’s Bookmarks core plugin to bookmark headings";
-    // Older Obsidian icon sets have bookmark-minus but not bookmark-check.
-    const savedIcon = typeof getIcon === "function" && getIcon("bookmark-check")
-      ? "bookmark-check" : "bookmark-minus";
-    setIcon(this.flyoutBookmark, state.saved ? savedIcon : "bookmark-plus");
+    // Mobile and desktop Obsidian can ship different Lucide icon versions.
+    const candidates = state.saved ? ["bookmark-check", "bookmark-minus", "bookmark"] : ["bookmark-plus", "bookmark"];
+    const icon = typeof getIcon === "function" ? candidates.find(name => getIcon(name)) : candidates[0];
+    this.flyoutBookmark.replaceChildren?.();
+    setIcon(this.flyoutBookmark, icon || "bookmark");
+    // Keep the action visible even when the installed icon registry lacks all
+    // variants. This fixed outline uses the same stroke and size as Lucide.
+    if (!this.flyoutBookmark.querySelector?.("svg") && this.flyoutBookmark.ownerDocument?.createElementNS) {
+      const doc = this.flyoutBookmark.ownerDocument;
+      const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      const outline = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+      outline.setAttribute("d", "M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z");
+      svg.append(outline);
+      const symbol = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+      symbol.setAttribute("d", state.saved ? "m9 10 2 2 4-4" : "M12 7v6m-3-3h6");
+      svg.append(symbol);
+      this.flyoutBookmark.replaceChildren(svg);
+    }
     // aria-label supplies Obsidian’s tooltip; title would add a second native one.
     this.flyoutBookmark.removeAttribute("title");
     this.flyoutBookmark.setAttribute("aria-label", title);
@@ -590,6 +765,7 @@ class RailView {
   }
 
   onKeyDown(event) {
+    this.setInputMode("keyboard");
     const key = event.key;
     if (!["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"].includes(key)) return;
     event.preventDefault();
@@ -636,6 +812,12 @@ class RailView {
   }
 
   onPointerMove(evt) {
+    if (evt.pointerType) this.setInputMode(evt.pointerType);
+    if (evt.pointerType === "touch" && !this.drag) {
+      if (this.touch?.id === evt.pointerId &&
+          Math.hypot(evt.clientX - this.touch.x, evt.clientY - this.touch.y) > 8) this.touch.moved = true;
+      return;
+    }
     if (this.drag && evt.pointerId !== this.drag.id) return;
     const dx = evt.clientX - this.lastPointerX;
     const dy = evt.clientY - this.lastPointerY;
@@ -653,50 +835,180 @@ class RailView {
     this.waveFrame = requestAnimationFrame(() => {
       this.waveFrame = 0;
       if (this.drag) {
-        if (Math.abs(this.pointerY - this.drag.y) > 3) this.drag.moved = true;
-        if (this.drag.moved) this.scrubTo(scrubProgress(this.pointerY, this.drag.start, this.drag.end));
-      } else this.revealAt(this.pointerY);
-      this.setHovered(this.nearestIndex(this.pointerY));
+        if (Math.abs(this.pointerY - this.drag.y) > (this.drag.slop ?? 3)) this.drag.moved = true;
+        if (this.drag.moved) this.scrubDragTo(this.dragProgressAt(this.pointerY));
+      } else {
+        this.revealAt(this.pointerY);
+        this.setHovered(this.nearestIndex(this.pointerY));
+      }
       if (this.settings.hoverStyle === "wave") this.applyWave();
     });
   }
 
   startDrag(evt) {
+    this.setInputMode(evt.pointerType || "mouse");
+    if (evt.pointerType !== "touch") this.touch = null;
+    if (evt.pointerType === "touch" && this.touch && evt.pointerId !== this.touch.id) {
+      this.touch.moved = true;
+      return;
+    }
     if (!this.drag) this.suppressClick = false;
+    if (evt.pointerType === "touch" && evt.button === 0 && !this.drag) {
+      // Cancel synthetic mouse/focus events, without cancelling native touch
+      // scrolling (which is governed by touch-action and touchmove).
+      evt.preventDefault();
+      this.cancelLeave();
+      this.cancelHoverFrame();
+      this.measure();
+      this.touch = { id: evt.pointerId, x: evt.clientX, y: evt.clientY,
+        index: this.nearestIndex(evt.clientY), moved: false };
+    }
     // Let a finger browse a dense outline using native scrolling; mouse and
     // pen drags still scrub the entire note across the bounded track.
     if (!this.settings.dragToScrub || evt.button !== 0 || this.drag ||
         (this.dense && evt.pointerType === "touch")) return;
     this.suppressClick = false;
-    this.revealAt(evt.clientY);
+    if (evt.pointerType !== "touch") this.revealAt(evt.clientY);
     this.measure();
     const centers = this.centers.filter(value => value != null);
     if (!centers.length) return;
     const box = this.el.getBoundingClientRect();
-    this.drag = { id: evt.pointerId, y: evt.clientY, moved: false, index: this.nearestIndex(evt.clientY),
+    this.drag = { id: evt.pointerId, pointerType: evt.pointerType, slop: evt.pointerType === "touch" ? 8 : 3,
+      y: evt.clientY, moved: false, index: this.touch?.index ?? this.nearestIndex(evt.clientY),
+      startedAt: this.dragNow(), strength: 1,
       start: !this.dense && centers.length > 1 ? centers[0] : box.top,
       end: !this.dense && centers.length > 1 ? centers.at(-1) : box.bottom };
+    this.touch = null;
+    this.drag.hapticIndex = this.dragSectionIndex();
+    this.plugin.beginDragHaptics?.(this);
     this.el.setPointerCapture(evt.pointerId);
     this.el.addClass("is-dragging");
     evt.preventDefault();
   }
 
+  dragNow() { return this.host?.ownerDocument.defaultView.performance?.now?.() ?? Date.now(); }
+
+  dragRanges() { return null; }
+
+  prepareDragTrack() {
+    if (!this.drag || this.drag.prepared) return;
+    this.drag.prepared = true;
+    this.cancelLabelMotion();
+    this.flyout?.addClass("is-scrubbing");
+    const selected = this.el.children[this.drag.index];
+    const before = selected?.getBoundingClientRect();
+    // Folded headings must have a mark while they can become a drag target.
+    Array.from(this.el.children).forEach(tick => tick.hidden = false);
+    this.fitPane();
+    if (before && selected) {
+      const after = selected.getBoundingClientRect();
+      if (this.dense) this.el.scrollTop += after.top - before.top;
+      else {
+        const existing = Number(this.el.style.getPropertyValue("--ss-reveal-shift")) || 0;
+        let shift = existing + before.top - after.top;
+        if (this.host) {
+          const host = this.host.getBoundingClientRect(), box = this.el.getBoundingClientRect();
+          shift = Math.max(existing + host.top + 16 - box.top, Math.min(shift, existing + host.bottom - 16 - box.bottom));
+        }
+        this.el.style.setProperty("--ss-reveal-shift", String(shift));
+        this.el.style.translate = `0 ${shift}px`;
+      }
+    }
+    this.measure();
+    const centers = this.centers.filter(center => center != null), box = this.el.getBoundingClientRect();
+    this.drag.start = !this.dense && centers.length > 1 ? centers[0] : box.top;
+    this.drag.end = !this.dense && centers.length > 1 ? centers.at(-1) : box.bottom;
+    this.drag.centers = [...this.centers];
+    this.drag.motion = { position: scrubProgress(this.drag.y, this.drag.start, this.drag.end) * Math.max(1, this.levels.length - 1),
+      time: this.drag.startedAt, speed: 0 };
+  }
+
+  dragProgressAt(clientY) {
+    this.pointerY = clientY;
+    this.prepareDragTrack();
+    const position = scrubProgress(clientY, this.drag.start, this.drag.end) * Math.max(1, this.levels.length - 1);
+    const direction = Math.sign(position - this.drag.motion.position);
+    this.drag.strength = sampleDragSpeed(this.drag.motion, position, this.dragNow());
+    let progress = this.dense ? scrubProgress(clientY, this.drag.start, this.drag.end)
+      : sectionDragProgress(clientY, this.drag.centers, this.dragRanges(), this.drag.start, this.drag.end, this.drag.strength);
+    // Changing the hold strength must never pull the note against the pointer
+    // direction, or move it when the user pauses/releases the drag.
+    if (this.drag.progress != null) {
+      if (direction > 0) progress = Math.max(progress, this.drag.progress);
+      else if (direction < 0) progress = Math.min(progress, this.drag.progress);
+      else progress = this.drag.progress;
+    }
+    this.drag.progress = progress;
+    return progress;
+  }
+
+  updateDragFeedback(index, crossed = false) {
+    if (index < 0 || !this.el?.children[index]) return;
+    const tick = this.el.children[index];
+    if (this.dense && this.drag?.moved) {
+      const box = this.el.getBoundingClientRect(), mark = tick.getBoundingClientRect();
+      const target = Math.max(box.top + 12, Math.min(box.bottom - 12, this.pointerY));
+      this.el.scrollTop += mark.top + mark.height / 2 - target;
+      this.centers = [];
+    }
+    if (this.hoveredIndex === index) this.showFlyout(index);
+    else this.setHovered(index);
+    if (crossed) {
+      this.dragSnapAnimation?.cancel();
+      this.dragSnapAnimation = null;
+      const mark = tick.firstElementChild;
+      const reduced = this.host?.ownerDocument.defaultView.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      const strength = this.drag?.strength ?? 1;
+      if (!reduced && strength > 0.2 && mark?.animate) {
+        this.dragSnapAnimation = mark.animate([
+          { transform: `scale(${1 + 0.16 * strength}, ${1 + 0.3 * strength})` }, { transform: "scale(1)" },
+        ], { duration: 140, easing: "ease-out" });
+      }
+    }
+  }
+
+  dragSectionIndex() { return this.activeIndex; }
+
+  scrubDragTo(progress) {
+    this.scrubTo(progress);
+    const index = this.dragSectionIndex();
+    const crossed = this.drag && index >= 0 && this.drag.hapticIndex >= 0 && index !== this.drag.hapticIndex;
+    if (crossed && (this.drag.strength ?? 1) > 0.25) this.plugin.tickDragHaptics?.(this);
+    if (this.drag) {
+      this.drag.hapticIndex = index;
+      this.updateDragFeedback(index, crossed);
+    }
+  }
+
   endDrag(evt, cancelled = false) {
+    if (this.touch?.id === evt.pointerId) {
+      const touch = this.touch;
+      this.touch = null;
+      this.suppressClick = true;
+      if (!cancelled && !touch.moved && Math.hypot(evt.clientX - touch.x, evt.clientY - touch.y) <= 8)
+        this.activate(touch.index);
+      this.onLeave();
+      return;
+    }
     if (!this.drag || evt.pointerId !== this.drag.id) return;
     const drag = this.drag;
     if (this.waveFrame) { cancelAnimationFrame(this.waveFrame); this.waveFrame = 0; }
-    if (Math.abs(evt.clientY - drag.y) > 3) drag.moved = true;
-    if (!cancelled && drag.moved) this.scrubTo(scrubProgress(evt.clientY, drag.start, drag.end));
+    if (Math.abs(evt.clientY - drag.y) > (drag.slop ?? 3)) drag.moved = true;
+    if (!cancelled && drag.moved) this.scrubDragTo(this.dragProgressAt(evt.clientY));
+    this.plugin.endDragHaptics?.(this);
     this.suppressClick = true; // Handle a short press here before folding changes hit targets.
     this.drag = null;
     this.el.removeClass("is-dragging");
+    this.flyout?.removeClass("is-scrubbing");
+    this.dragSnapAnimation?.cancel();
+    this.dragSnapAnimation = null;
     if (this.el.hasPointerCapture(evt.pointerId)) this.el.releasePointerCapture(evt.pointerId);
     this.onLeave();
     if (!cancelled && !drag.moved) this.activate(drag.index);
   }
 
   updateHierarchy() {
-    if (this.drag) return; // Keep the drag track stable as the current heading changes.
+    if (this.drag || this.touch) return; // Keep pressed targets stable as the current heading changes.
     const visible = !this.keyboardFocused && this.settings.hierarchyMode === "nearby"
       ? hierarchyVisible(this.levels, this.settings.idleLevels, this.activeIndex, this.expandedBranch)
       : this.levels.map(() => true);
@@ -706,7 +1018,7 @@ class RailView {
   }
 
   revealAt(clientY) {
-    if (this.drag || this.keyboardFocused || this.settings.hierarchyMode !== "nearby") return;
+    if (this.drag || this.touch || this.keyboardFocused || this.settings.hierarchyMode !== "nearby") return;
     const index = this.nearestIndex(clientY);
     if (index < 0) return;
     const root = headingBranches(this.levels, this.settings.idleLevels)[index];
@@ -776,7 +1088,8 @@ class RailView {
     const reach = Math.max(1, waveReach);
     for (let i = 0; i < ticks.length; i++) {
       if (this.centers[i] == null) continue;
-      const distance = Math.abs(this.centers[i] - this.pointerY) / reach;
+      const waveY = this.drag?.moved ? (this.centers[this.dragSectionIndex()] ?? this.pointerY) : this.pointerY;
+      const distance = Math.abs(this.centers[i] - waveY) / reach;
 
       // Raised cosine, then sharpened by the focus exponent. Focus 1 is a broad
       // swell across neighbours; higher values pull the growth onto the bar
@@ -809,7 +1122,7 @@ class RailView {
     const tick = this.el.children[index];
     if (!label || !tick) return;
 
-    const switching = settings.labelMoveMotion === "slide" && this.flyoutIndex >= 0 &&
+    const switching = !this.drag?.moved && settings.labelMoveMotion === "slide" && this.flyoutIndex >= 0 &&
       this.flyoutIndex !== index && this.flyout.classList.contains("is-visible");
     // Retarget from the on-screen position when moving quickly between marks.
     const fromTop = switching ? this.flyout.ownerDocument.defaultView.getComputedStyle(this.flyout).top : null;
@@ -957,6 +1270,7 @@ class RailView {
         markPassed && !isActive && i < current
       );
     }
+    if (this.drag?.moved && current >= 0 && current !== this.hoveredIndex) this.updateDragFeedback(current);
   }
 }
 
@@ -1166,7 +1480,7 @@ class DocumentRail extends RailView {
     if (!el) return;
     if (this.settings.trackingMode === "length") {
       const starts = this.headingLandingStarts();
-      if (starts) this.scrubTo(starts[index]);
+      if (starts) this.scrubTo(starts[index], true);
       else this.syncActive();
       return;
     }
@@ -1177,15 +1491,39 @@ class DocumentRail extends RailView {
         headingTop: bounds?.top, headingBottom: bounds?.bottom,
         preferredTop: el.scrollTop, lastAtBottom: this.settings.lastAtBottom,
       });
-    if (progress !== null) this.scrubTo(progress);
+    if (progress !== null) this.scrubTo(progress, true);
   }
 
-  scrubTo(progress) {
+  dragRanges() {
+    if (this.settings.trackingMode === "length") {
+      const starts = this.headingLandingStarts();
+      return starts ? physicalHeadingRanges(starts) : null;
+    }
+    if (this.settings.trackingMode === "equal") {
+      return headingAllocations(this.headings.map(heading => heading.position.start.line), this.lines.length, "equal");
+    }
+    return null;
+  }
+
+  dragSectionIndex() {
+    if (this.settings.trackingMode !== "off") return this.activeIndex;
+    const starts = this.headingLandingStarts();
+    const el = this.scroller;
+    const range = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+    return resolveCurrent(this.headings.map(heading => heading.position.start.line), this.lines.length,
+      { ...this.settings, trackingMode: starts ? "length" : "position", lastAtBottom: false },
+      { headingStarts: starts, first: this.scrollTopLine(), progress: range ? el.scrollTop / range : 0 });
+  }
+
+  scrubTo(progress, alignToPixel = false) {
     const el = this.scroller;
     if (!el) return;
     const previous = el.style.scrollBehavior;
     el.style.scrollBehavior = "auto";
-    el.scrollTop = clampProgress(progress) * Math.max(0, el.scrollHeight - el.clientHeight);
+    const top = clampProgress(progress) * Math.max(0, el.scrollHeight - el.clientHeight);
+    // A normalized integer landing can multiply back to e.g. 17.999999999.
+    // WebKit floors that to 17, leaving the previous mark active.
+    el.scrollTop = alignToPixel ? Math.round(top) : top;
     el.style.scrollBehavior = previous;
     this.syncActive();
   }
@@ -1595,6 +1933,14 @@ class PreviewRail extends RailView {
     this.activeKey = "";
     this.syncActive();
     this.fitScene();
+  }
+
+  dragRanges() {
+    if (this.settings.trackingMode === "length") {
+      return physicalHeadingRanges(headingLandingStarts(SAMPLE.map(item => item.percent * 10), 750, 250));
+    }
+    if (this.settings.trackingMode === "equal") return headingAllocations(SAMPLE.map(item => item.percent), 100, "equal");
+    return null;
   }
 
   scrubTo(progress) {
@@ -2036,6 +2382,9 @@ class ScrollspySettingTab extends PluginSettingTab {
     const navigation = this.heading("Heading navigation");
     this.toggle(navigation, "Place cursor at heading", "When clicking a mark in editing mode, move the cursor to the start of its heading.", "placeCursorOnNavigate", false);
     this.toggle(navigation, "Briefly highlight heading", "When clicking a mark, highlight its destination and fade it out. Works in reading and editing modes.", "highlightOnNavigate", false);
+    if (Platform?.isMacOS && Platform?.isDesktopApp) {
+      this.toggle(navigation, "Haptic ticks while dragging", "Feel section boundaries on a Force Touch or Magic Trackpad. No extra feedback on clicks or ordinary scrolling. Mac only.", "macDragHaptics", false);
+    }
     const box = this.heading("Scroll tracking");
     this.choices(box, "Tracking rule", "Try each rule with the slider above.", "trackingMode", {
       position: ["Follow the note", "Current when its heading reaches the top."],
@@ -2433,6 +2782,23 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
     this.app.workspace.onLayoutReady(this.refresh);
   }
 
+  beginDragHaptics(rail) {
+    if (!this.settings.macDragHaptics || !Platform?.isMacOS || !Platform?.isDesktopApp) return;
+    if (!this.dragHaptics) {
+      try {
+        // Keep Node imports behind the desktop guard so mobile never loads them.
+        this.dragHaptics = new MacDragHaptics(require("child_process").spawn);
+      } catch (_) { return; }
+    }
+    this.dragHaptics.begin(rail);
+  }
+
+  tickDragHaptics(rail) {
+    if (this.settings.macDragHaptics) this.dragHaptics?.tick(rail);
+  }
+
+  endDragHaptics(rail) { this.dragHaptics?.end(rail); }
+
   installHeadingNavigation() {
     const proto = MarkdownView?.prototype;
     const original = proto?.setEphemeralState;
@@ -2462,6 +2828,7 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
   }
 
   onunload() {
+    this.dragHaptics?.end();
     this.flushSettings();
     this.settingTab?.hide();
     for (const rail of this.rails.values()) rail.destroy();
@@ -2469,6 +2836,7 @@ module.exports = class ScrollspyRailPlugin extends Plugin {
   }
 
   saveSettings() {
+    if (!this.settings.macDragHaptics) this.dragHaptics?.end();
     // Paint immediately; persist only once a slider has settled.
     for (const rail of this.rails.values()) rail.updateSettings();
     if (this.settingsTimer) clearTimeout(this.settingsTimer);
