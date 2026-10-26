@@ -1,14 +1,7 @@
 import type ScrollspyRailPlugin from "../plugin";
 import type { RailSettings, Settings } from "./model";
-import type { App } from "obsidian";
-import {
-  PluginSettingTab,
-  Setting,
-  Menu,
-  Notice,
-  setIcon,
-  Platform,
-} from "obsidian";
+import type { App, SettingDefinitionItem } from "obsidian";
+import { PluginSettingTab, Setting, Menu, Notice, setIcon } from "obsidian";
 import {
   DEFAULTS,
   SESSION_DEFAULTS,
@@ -23,6 +16,81 @@ import {
 } from "./model";
 import { PreviewRail, SAMPLE } from "../rail/preview-rail";
 class ScrollspySettingTab extends PluginSettingTab {
+  private renderHost: HTMLElement | null = null;
+  private renderOwner: object | null = null;
+
+  private get workbenchEl() {
+    return this.renderHost || this.containerEl;
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        name: "Rail workbench",
+        desc: "Customize rail appearance, tracking, labels, presets and placement.",
+        aliases: [
+          "shape",
+          "length",
+          "thickness",
+          "rounding",
+          "spacing",
+          "alignment",
+          "colour",
+          "color",
+          "opacity",
+          "states",
+          "hierarchy",
+          "headings",
+          "section length",
+          "heading position",
+          "equal scroll steps",
+          "progress",
+          "hover",
+          "swell",
+          "dot",
+          "badge",
+          "pointer area",
+          "drag",
+          "navigation",
+          "cursor",
+          "highlight",
+          "excerpt",
+          "bookmark",
+          "percent",
+          "motion",
+          "animation",
+          "duration",
+          "width",
+          "font",
+          "padding",
+          "surface",
+          "side",
+          "anchor",
+          "offset",
+          "visibility",
+          "phone",
+          "landscape",
+          "minimum headings",
+          "pane",
+          "CSS snippets",
+          "preset JSON",
+        ],
+        render: (setting) => {
+          const owner = {};
+          this.renderOwner = owner;
+          this.renderHost = setting.settingEl;
+          this.renderHost.addClass("scrollspy-workbench-host");
+          this.renderWorkbench();
+          return () => {
+            if (this.renderOwner !== owner) return;
+            this.hide();
+            this.renderHost = null;
+            this.renderOwner = null;
+          };
+        },
+      },
+    ];
+  }
   declare plugin: ScrollspyRailPlugin;
   declare draftName: string;
   declare updateTargetId: string | null;
@@ -81,7 +149,7 @@ class ScrollspySettingTab extends PluginSettingTab {
       this.presetDrop.setValue(this.plugin.settings.activePreset);
     }
     if (this.presetUpdateEl) this.renderPresetUpdate();
-    if (render) this.display();
+    if (render) this.renderWorkbench();
   }
 
   // Touching anything a preset captures means you are no longer on that preset.
@@ -107,8 +175,12 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
   display() {
+    this.renderWorkbench();
+  }
+
+  renderWorkbench() {
     const s = this.plugin.settings,
-      container = this.containerEl;
+      container = this.workbenchEl;
     const managerOpen = container.querySelector<HTMLDetailsElement>(
       ".scrollspy-preset-manager",
     )?.open;
@@ -123,7 +195,7 @@ class ScrollspySettingTab extends PluginSettingTab {
     container.addClass("scrollspy-settings");
     container.addClass("scrollspy-workbench");
     const header = container.createDiv({ cls: "scrollspy-settings-header" });
-    header.createEl("h2", { text: "Margin Rail" });
+    header.createDiv({ text: "Margin Rail", cls: "scrollspy-settings-title" });
     this.renderPresetPicker(header, s);
     const manager = header.createEl("details", {
       cls: "scrollspy-preset-manager",
@@ -172,7 +244,7 @@ class ScrollspySettingTab extends PluginSettingTab {
         s.settingsSection = target;
         this.filesOpen = false;
         this.save(true);
-        this.containerEl
+        this.workbenchEl
           .querySelector<HTMLElement>(`#scrollspy-tab-${target}`)
           ?.focus({ preventScroll: true });
       };
@@ -198,8 +270,10 @@ class ScrollspySettingTab extends PluginSettingTab {
       });
     }
     const body = container.createDiv({ cls: "scrollspy-workbench-body" });
-    this.renderPreview(body.createDiv({ cls: "scrollspy-preview-column" }));
     const inspector = body.createDiv({ cls: "scrollspy-inspector" });
+    this.renderPreview(
+      inspector.createDiv({ cls: "scrollspy-preview-column" }),
+    );
     inspector.id = "scrollspy-settings-panel";
     inspector.setAttribute("role", "tabpanel");
     inspector.setAttribute(
@@ -215,9 +289,12 @@ class ScrollspySettingTab extends PluginSettingTab {
       });
       section.dataset.group = group;
       const header = section.createDiv({ cls: "scrollspy-section-header" });
-      const heading = header.createEl("h3", { text: title });
-      heading.id = `scrollspy-section-${group}`;
-      section.setAttribute("aria-labelledby", heading.id);
+      const heading = new Setting(header).setName(title).setHeading();
+      heading.settingEl.addClass("scrollspy-section-heading");
+      heading.nameEl.id = `scrollspy-section-${group}`;
+      heading.nameEl.setAttribute("role", "heading");
+      heading.nameEl.setAttribute("aria-level", "2");
+      section.setAttribute("aria-labelledby", heading.nameEl.id);
       const panel = section.createDiv({ cls: "scrollspy-panel" });
       this.sectionEl = panel;
       if (this.filesOpen) this.renderFiles(group);
@@ -289,14 +366,14 @@ class ScrollspySettingTab extends PluginSettingTab {
         control.selectEl.dataset.setting = key;
         control
           .addOptions(SETTING_OPTIONS[key])
-          .setValue(String(s[key]))
+          .setValue(typeof s[key] === "string" ? s[key] : "")
           .onChange((value) => this.changeField(key, value, true));
       });
     else if (NUMBER_RULES[key]) {
       const [min, max, step, unit] = NUMBER_RULES[key],
         percent = unit === "%",
         multiplier = percent ? 100 : 1;
-      const effective = this.preview?.settings[key] ?? s[key];
+      const effective = Number(this.preview?.settings[key] ?? s[key]);
       if (effective !== s[key]) {
         const source = row.controlEl.createEl("button", {
           type: "button",
@@ -307,7 +384,7 @@ class ScrollspySettingTab extends PluginSettingTab {
         source.title = "This value comes from a CSS snippet";
         source.addEventListener("click", () => {
           this.filesOpen = true;
-          this.display();
+          this.renderWorkbench();
         });
       }
       const input = row.controlEl.createEl("input", {
@@ -341,7 +418,7 @@ class ScrollspySettingTab extends PluginSettingTab {
     } else if (key.toLowerCase().includes("color"))
       row.addColorPicker((control) =>
         control
-          .setValue(String(s[key]))
+          .setValue(typeof s[key] === "string" ? s[key] : "")
           .onChange((value) => this.changeField(key, value, false)),
       );
     return row;
@@ -359,7 +436,7 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
   focusSetting(key: keyof Settings) {
-    this.containerEl
+    this.workbenchEl
       .querySelector<HTMLElement>(`[data-setting="${key}"]`)
       ?.focus({ preventScroll: true });
   }
@@ -368,11 +445,21 @@ class ScrollspySettingTab extends PluginSettingTab {
     const s = this.plugin.settings;
     this.renderedKeys = new Set();
     const fields = (entries: [keyof Settings, string][]) =>
-      entries.forEach(([key, label]) => this.field(key, label));
+      entries.forEach(([key, label]) => {
+        this.field(key, label);
+      });
     switch (`${section}/${group}`) {
       case "appearance/shape": {
         const row = new Setting(this.sectionEl!).setName("Shape"),
-          choices: Record<string, [string, Record<string, number>]> = {
+          choices: Record<
+            string,
+            [
+              string,
+              Partial<
+                Pick<RailSettings, "tickHeight" | "tickRadius" | "tickWidth">
+              >,
+            ]
+          > = {
             bar: ["Bar", { tickHeight: 3, tickRadius: 1 }],
             fine: ["Hairline", { tickHeight: 1, tickRadius: 0 }],
             dot: ["Dot", { tickWidth: 6, tickHeight: 6, tickRadius: 16 }],
@@ -389,17 +476,19 @@ class ScrollspySettingTab extends PluginSettingTab {
           button.setAttribute(
             "aria-pressed",
             String(
-              Object.entries(values).every(([key, value]) => s[key] === value),
+              Object.entries(values).every(
+                ([key, value]) => s[key as keyof RailSettings] === value,
+              ),
             ),
           );
           button.createSpan({ cls: `scrollspy-shape-icon shape-${id}` });
           button.addEventListener("click", () => {
             for (const [key, value] of Object.entries(values)) {
-              s[key] = value;
+              Object.assign(s, { [key]: value });
               this.edited(key);
             }
             this.save(true);
-            this.containerEl
+            this.workbenchEl
               .querySelector<HTMLElement>(`[data-shape="${id}"]`)
               ?.focus({ preventScroll: true });
           });
@@ -520,8 +609,6 @@ class ScrollspySettingTab extends PluginSettingTab {
           ["placeCursorOnNavigate", "Place cursor at heading"],
           ["highlightOnNavigate", "Highlight destination"],
         ]);
-        if (Platform?.isMacOS && Platform?.isDesktopApp)
-          this.field("macDragHaptics", "Haptic ticks while dragging");
         break;
       case "labels/content":
         fields([
@@ -584,8 +671,9 @@ class ScrollspySettingTab extends PluginSettingTab {
       // without filling the preview with readable filler text.
       const widths = [100, 87, 95, 72, 92, 100, 81, 58];
       for (let line = 0; line < (index % 3 === 0 ? 8 : 5); line++) {
-        body.createSpan({ cls: "scrollspy-sample-line" }).style.width =
-          `${widths[(line + index) % widths.length]}%`;
+        body.createSpan({ cls: "scrollspy-sample-line" }).setCssStyles({
+          width: `${widths[(line + index) % widths.length]}%`,
+        });
       }
     });
     this.preview = new PreviewRail(this.plugin, stage);
@@ -698,7 +786,7 @@ class ScrollspySettingTab extends PluginSettingTab {
     });
     button("Show current JSON", () => {
       this.jsonDraft = null;
-      this.display();
+      this.renderWorkbench();
     });
     button("Download JSON", () => {
       const doc = parent.ownerDocument,
@@ -706,7 +794,7 @@ class ScrollspySettingTab extends PluginSettingTab {
       const url = win.URL.createObjectURL(
         new win.Blob([input.value], { type: "application/json" }),
       );
-      const link = doc.createElement("a");
+      const link = createEl("a");
       link.href = url;
       link.download = "margin-rail-preset.json";
       link.click();
@@ -715,11 +803,19 @@ class ScrollspySettingTab extends PluginSettingTab {
     const file = parent.createEl("input", { type: "file" });
     file.accept = ".json,application/json";
     file.setAttribute("aria-label", "Open preset JSON file");
-    file.addEventListener("change", async () => {
-      if (file.files?.[0]) {
-        input.value = await file.files[0].text();
-        this.jsonDraft = input.value;
-      }
+    file.addEventListener("change", () => {
+      const selected = file.files?.[0];
+      if (!selected) return;
+      void selected
+        .text()
+        .then((text) => {
+          input.value = text;
+          this.jsonDraft = text;
+        })
+        .catch(() => {
+          message.setText("Could not open the preset file.");
+          message.setAttribute("role", "alert");
+        });
     });
   }
 
@@ -780,7 +876,7 @@ class ScrollspySettingTab extends PluginSettingTab {
       const menu = new Menu();
       menu.addItem((item) =>
         item.setTitle("Save preset as…").onClick(() => {
-          const manager = this.containerEl.querySelector<HTMLDetailsElement>(
+          const manager = this.workbenchEl.querySelector<HTMLDetailsElement>(
             ".scrollspy-preset-manager",
           ) as HTMLDetailsElement;
           manager.open = true;
@@ -790,7 +886,7 @@ class ScrollspySettingTab extends PluginSettingTab {
       menu.addItem((item) =>
         item.setTitle("CSS snippets and preset JSON…").onClick(() => {
           this.filesOpen = true;
-          this.display();
+          this.renderWorkbench();
         }),
       );
       menu.addItem((item) =>
@@ -906,7 +1002,7 @@ class ScrollspySettingTab extends PluginSettingTab {
             .onClick(() => {
               // Choosing a destination never loads it over the current edits.
               this.updateTargetId = preset.id;
-              this.display();
+              this.renderWorkbench();
               this.presetUpdateEl
                 .querySelector<HTMLElement>("[aria-haspopup]")
                 ?.focus({ preventScroll: true });
@@ -918,7 +1014,7 @@ class ScrollspySettingTab extends PluginSettingTab {
   }
 
   renderPresets(s: Settings) {
-    const box = this.sectionEl || this.containerEl;
+    const box = this.sectionEl || this.workbenchEl;
     new Setting(box)
       .setName("Save current settings")
       .setDesc(
@@ -948,7 +1044,7 @@ class ScrollspySettingTab extends PluginSettingTab {
             s.sourcePresetId = id;
             this.updateTargetId = id;
             this.draftName = "";
-            const manager = this.containerEl.querySelector<HTMLDetailsElement>(
+            const manager = this.workbenchEl.querySelector<HTMLDetailsElement>(
               ".scrollspy-preset-manager",
             );
             if (manager) manager.open = false;

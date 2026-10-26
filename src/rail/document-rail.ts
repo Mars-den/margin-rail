@@ -1,4 +1,8 @@
-import { MarkdownView, Notice, Platform } from "obsidian";
+import { Platform } from "obsidian";
+import type { HeadingCache, MarkdownView, TFile } from "obsidian";
+import type ScrollspyRailPlugin from "../plugin";
+import type { RailMarkdownMode, RailMarkdownView } from "./internal-types";
+import type { BookmarksCore } from "../integrations/bookmarks";
 import { RailView } from "./rail-view";
 import { railVisibilityReason } from "../settings/model";
 import {
@@ -16,38 +20,37 @@ import {
   findHeadingBookmark,
   bookmarksCore,
 } from "../integrations/bookmarks";
-const LOOKAHEAD_LINES = 1;
 class DocumentRail extends RailView {
-  declare view: any;
-  declare headings: any[];
-  declare lines: any[];
-  declare scroller: any;
-  declare bookmarksPlugin: any;
+  declare view: RailMarkdownView;
+  declare headings: HeadingCache[];
+  declare lines: string[];
+  declare scroller: HTMLElement | null;
+  declare bookmarksPlugin: BookmarksCore | null;
   declare onBookmarksChanged: () => void;
   declare scrollFrame: number;
   declare onScroll: () => void;
   declare onNavigationInput: () => void;
   declare resizeObserver: ResizeObserver;
-  declare sourceEpoch: any;
-  declare navigationHighlightTimer: NodeJS.Timeout | null;
-  declare navigationHighlight: any;
-  declare navigationHighlightScrollTop: any;
+  declare sourceEpoch: number;
+  declare navigationHighlightTimer: number | null;
+  declare navigationHighlight: HTMLDivElement | null;
+  declare navigationHighlightScrollTop: number;
   declare pendingNavigation: {
-    line: any;
-    file: any;
-    mode: any;
+    line: number;
+    file: TFile | null;
+    mode: RailMarkdownMode;
     ready: boolean;
     feedback: boolean;
   } | null;
-  declare navigationFrame: any;
-  declare navigationWindow: any;
-  declare scrollWindow: any;
-  declare file: any;
-  declare filePath: any;
+  declare navigationFrame: number;
+  declare navigationWindow: Window | null;
+  declare scrollWindow: Window | null;
+  declare file: TFile | null;
+  declare filePath: string | undefined;
   declare cachedMetadataKey: string;
   declare sourceReady: boolean;
 
-  constructor(plugin: any, view: any) {
+  constructor(plugin: ScrollspyRailPlugin, view: MarkdownView) {
     super(plugin, view.containerEl);
     this.view = view;
     this.headings = [];
@@ -63,6 +66,7 @@ class DocumentRail extends RailView {
     this.onScroll = () => {
       if (
         this.navigationHighlight &&
+        this.scroller &&
         Math.abs(this.scroller.scrollTop - this.navigationHighlightScrollTop) >
           1
       )
@@ -90,7 +94,7 @@ class DocumentRail extends RailView {
     super.destroy();
   }
 
-  activate(index: any) {
+  activate(index: number) {
     this.cancelHeadingNavigation();
     const heading = this.headings[index];
     if (!heading) return;
@@ -119,7 +123,7 @@ class DocumentRail extends RailView {
     }
   }
 
-  finishHeadingNavigation(index: any, feedback: any) {
+  finishHeadingNavigation(index: number, feedback: boolean) {
     const mode = this.view.currentMode;
     const line = this.headings[index].position.start.line;
     if (
@@ -149,13 +153,13 @@ class DocumentRail extends RailView {
 
   clearNavigationHighlight() {
     if (this.navigationHighlightTimer)
-      clearTimeout(this.navigationHighlightTimer);
+      this.win.clearTimeout(this.navigationHighlightTimer);
     this.navigationHighlightTimer = null;
     this.navigationHighlight?.remove();
     this.navigationHighlight = null;
   }
 
-  showNavigationHighlight(index: any) {
+  showNavigationHighlight(index: number) {
     this.clearNavigationHighlight();
     const bounds = this.headingBounds(index),
       el = this.scroller;
@@ -171,18 +175,16 @@ class DocumentRail extends RailView {
     );
     if (bottom <= top) return;
     const highlight = (this.navigationHighlight =
-      el.ownerDocument.createElement("div"));
-    highlight.className = "scrollspy-heading-flash";
+      el.ownerDocument.body.createDiv({ cls: "scrollspy-heading-flash" }));
     highlight.setAttribute("aria-hidden", "true");
-    Object.assign(highlight.style, {
+    highlight.setCssStyles({
       top: `${top}px`,
       left: `${frame.left + el.clientLeft}px`,
       width: `${el.clientWidth}px`,
       height: `${bottom - top}px`,
     });
-    el.ownerDocument.body.appendChild(highlight);
     this.navigationHighlightScrollTop = el.scrollTop;
-    this.navigationHighlightTimer = setTimeout(
+    this.navigationHighlightTimer = this.win.setTimeout(
       () => this.clearNavigationHighlight(),
       1400,
     );
@@ -191,11 +193,11 @@ class DocumentRail extends RailView {
   cancelHeadingNavigation() {
     this.pendingNavigation = null;
     if (this.navigationFrame)
-      this.navigationWindow.cancelAnimationFrame(this.navigationFrame);
+      this.navigationWindow?.cancelAnimationFrame(this.navigationFrame);
     this.navigationFrame = 0;
   }
 
-  queueHeadingNavigation(line: any, feedback: any = false) {
+  queueHeadingNavigation(line: number, feedback = false) {
     this.cancelHeadingNavigation();
     const request = (this.pendingNavigation = {
       line,
@@ -204,7 +206,7 @@ class DocumentRail extends RailView {
       ready: false as boolean,
       feedback,
     });
-    const win = (this.navigationWindow = this.host.ownerDocument.defaultView);
+    const win = (this.navigationWindow = this.win);
     const schedule = () => {
       if (this.pendingNavigation !== request) return;
       if (this.navigationFrame) win.cancelAnimationFrame(this.navigationFrame);
@@ -238,14 +240,14 @@ class DocumentRail extends RailView {
     this.pendingNavigation = null;
     this.attachScroller();
     const index = this.headings.findIndex(
-      (heading: any) => heading.position.start.line === request.line,
+      (heading) => heading.position.start.line === request.line,
     );
     if (index < 0) return false;
     this.finishHeadingNavigation(index, request.feedback);
     return true;
   }
 
-  headingBounds(index: any) {
+  headingBounds(index: number) {
     const heading = this.headings[index];
     const line = heading.position.start.line;
     const mode = this.view.currentMode;
@@ -258,6 +260,8 @@ class DocumentRail extends RailView {
       const top = block.top + (cm.contentDOM?.offsetTop || 0);
       return { top, bottom: top + block.height, measured: true };
     }
+    const scroller = this.scroller;
+    if (!scroller) return null;
     for (const section of mode?.renderer?.sections || []) {
       if (section.lineStart > line || section.lineEnd < line) continue;
       const nodes = Array.from(
@@ -267,17 +271,17 @@ class DocumentRail extends RailView {
         section.lineStart === line
           ? nodes[0]
           : nodes.find(
-              (node: any) =>
+              (node) =>
                 node.getAttribute("data-heading") === heading.heading ||
-                node.textContent.trim() === heading.heading,
+                node.textContent?.trim() === heading.heading,
             );
       if (!node) continue;
       const box = (node as HTMLElement).getBoundingClientRect();
       if (!box.height) continue;
       const offset =
-        this.scroller.scrollTop -
-        this.scroller.getBoundingClientRect().top -
-        this.scroller.clientTop;
+        scroller.scrollTop -
+        scroller.getBoundingClientRect().top -
+        scroller.clientTop;
       return {
         top: box.top + offset,
         bottom: box.bottom + offset,
@@ -294,7 +298,8 @@ class DocumentRail extends RailView {
         Math.max(1, section.lineEnd - section.lineStart + 1);
       const renderer = mode.renderer;
       if (
-        typeof renderer.getSectionTop === "function" &&
+        typeof renderer?.getSectionTop === "function" &&
+        typeof section.height === "number" &&
         Number.isFinite(section.height)
       ) {
         const offset = renderer.getSectionTop(section);
@@ -308,9 +313,9 @@ class DocumentRail extends RailView {
       if (!box.height) continue;
       const top =
         box.top +
-        this.scroller.scrollTop -
-        this.scroller.getBoundingClientRect().top -
-        this.scroller.clientTop +
+        scroller.scrollTop -
+        scroller.getBoundingClientRect().top -
+        scroller.clientTop +
         fraction * box.height;
       return { top, bottom: top, measured: false };
     }
@@ -320,22 +325,27 @@ class DocumentRail extends RailView {
   headingLandingStarts() {
     const el = this.scroller;
     if (!el) return null;
-    const bounds = this.headings.map((_: any, index: any) =>
+    const bounds = this.headings.map((_heading, index) =>
       this.headingBounds(index),
     );
-    const tops = bounds.map((bounds: any) => bounds?.top);
     // Missing virtualized headings use their renderer section's layout estimate
     // in headingBounds; if unavailable, keep native source-position tracking.
-    if (tops.some((top: any) => !Number.isFinite(top))) return null;
+    if (
+      !bounds.every(
+        (bounds): bounds is NonNullable<typeof bounds> =>
+          bounds !== null && Number.isFinite(bounds.top),
+      )
+    )
+      return null;
     return headingLandingStarts(
-      tops,
+      bounds.map((bounds) => bounds.top),
       Math.max(0, el.scrollHeight - el.clientHeight),
       el.clientHeight,
-      bounds.map((bounds: any) => bounds.bottom),
+      bounds.map((bounds) => bounds.bottom),
     );
   }
 
-  landAtHeading(index: any) {
+  landAtHeading(index: number) {
     const el = this.scroller;
     if (!el) return;
     if (this.settings.trackingMode === "length") {
@@ -346,15 +356,15 @@ class DocumentRail extends RailView {
     }
     const bounds = this.headingBounds(index);
     const progress = headingNavigationProgress(
-      this.headings.map((item: any) => item.position.start.line),
+      this.headings.map((item) => item.position.start.line),
       this.lines.length,
       this.settings.trackingMode,
       index,
       {
         scrollRange: Math.max(0, el.scrollHeight - el.clientHeight),
         viewportHeight: el.clientHeight,
-        headingTop: bounds?.top,
-        headingBottom: bounds?.bottom,
+        headingTop: bounds?.top ?? Number.NaN,
+        headingBottom: bounds?.bottom ?? Number.NaN,
         preferredTop: el.scrollTop,
         lastAtBottom: this.settings.lastAtBottom,
       },
@@ -369,7 +379,7 @@ class DocumentRail extends RailView {
     }
     if (this.settings.trackingMode === "equal") {
       return headingAllocations(
-        this.headings.map((heading: any) => heading.position.start.line),
+        this.headings.map((heading) => heading.position.start.line),
         this.lines.length,
         "equal",
       );
@@ -383,7 +393,7 @@ class DocumentRail extends RailView {
     const el = this.scroller;
     const range = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
     return resolveCurrent(
-      this.headings.map((heading: any) => heading.position.start.line),
+      this.headings.map((heading) => heading.position.start.line),
       this.lines.length,
       {
         ...this.settings,
@@ -393,26 +403,26 @@ class DocumentRail extends RailView {
       {
         headingStarts: starts,
         first: this.scrollTopLine(),
-        progress: range ? el.scrollTop / range : 0,
+        progress: range && el ? el.scrollTop / range : 0,
       },
     );
   }
 
-  scrubTo(progress: any, alignToPixel: any = false) {
+  scrubTo(progress: number, alignToPixel = false) {
     const el = this.scroller;
     if (!el) return;
     const previous = el.style.scrollBehavior;
-    el.style.scrollBehavior = "auto";
+    el.setCssStyles({ scrollBehavior: "auto" });
     const top =
       clampProgress(progress) * Math.max(0, el.scrollHeight - el.clientHeight);
     // A normalized integer landing can multiply back to e.g. 17.999999999.
     // WebKit floors that to 17, leaving the previous mark active.
     el.scrollTop = alignToPixel ? Math.round(top) : top;
-    el.style.scrollBehavior = previous;
+    el.setCssStyles({ scrollBehavior: previous });
     this.syncActive();
   }
 
-  labelFor(index: any) {
+  labelFor(index: number) {
     const heading = this.headings[index];
     if (!heading) return null;
     return {
@@ -422,7 +432,7 @@ class DocumentRail extends RailView {
     };
   }
 
-  bookmarkState(index: any) {
+  bookmarkState(index: number) {
     const core = bookmarksCore(this.view.app);
     const file = this.view.file;
     const heading = this.headings[index];
@@ -441,7 +451,7 @@ class DocumentRail extends RailView {
     };
   }
 
-  async bookmarkHeading(index: any) {
+  async bookmarkHeading(index: number) {
     const core = bookmarksCore(this.view.app);
     const file = this.view.file;
     const heading = this.headings[index];
@@ -463,7 +473,7 @@ class DocumentRail extends RailView {
   // How far into the document this heading sits, by line. Lines rather than
   // pixels because that is the unit the rest of the plugin already works in,
   // and it does not change with window width or folded sections.
-  percentAt(index: any) {
+  percentAt(index: number) {
     if ((this.headings.at(-1)?.position.start.line ?? -1) >= this.lines.length)
       return null;
     const span = Math.max(1, this.lines.length - 1);
@@ -473,7 +483,7 @@ class DocumentRail extends RailView {
 
   // The body between this heading and the next, flattened to one line. Markdown
   // is stripped roughly -- this is a glance, not a render.
-  previewAt(index: any) {
+  previewAt(index: number) {
     if (!this.settings.showPreview) return "";
 
     const start = this.headings[index].position.start.line + 1;
@@ -482,7 +492,7 @@ class DocumentRail extends RailView {
 
     const text = this.lines
       .slice(start, end)
-      .map((line: any) =>
+      .map((line) =>
         line
           .replace(/^\s*>\s?/, "")
           .replace(/^\s*[-*+]\s+/, "")
@@ -514,12 +524,12 @@ class DocumentRail extends RailView {
     // can bind to the hidden editor, whose scrollTop never changes while reading.
     const next = reading
       ? mode?.renderer?.previewEl ||
-        this.view.containerEl.querySelector(
+        this.view.containerEl.querySelector<HTMLElement>(
           ".markdown-reading-view .markdown-preview-view",
         )
       : mode?.cm?.scrollDOM ||
         this.view.editor?.cm?.scrollDOM ||
-        this.view.containerEl.querySelector(
+        this.view.containerEl.querySelector<HTMLElement>(
           ".markdown-source-view .cm-scroller",
         );
     if (next === this.scroller) return;
@@ -539,7 +549,7 @@ class DocumentRail extends RailView {
 
   scheduleActive() {
     if (this.scrollFrame) return;
-    const win = this.host.ownerDocument.defaultView;
+    const win = this.win;
     this.scrollWindow = win;
     this.scrollFrame = win.requestAnimationFrame(() => {
       this.scrollFrame = 0;
@@ -550,7 +560,7 @@ class DocumentRail extends RailView {
 
   cancelActiveFrame() {
     if (this.scrollFrame)
-      this.scrollWindow.cancelAnimationFrame(this.scrollFrame);
+      this.scrollWindow?.cancelAnimationFrame(this.scrollFrame);
     this.scrollFrame = 0;
     this.scrollWindow = null;
   }
@@ -604,7 +614,7 @@ class DocumentRail extends RailView {
     );
   }
 
-  refresh(force: any = false, checkMetadata: any = false) {
+  refresh(force = false, checkMetadata = false) {
     this.syncBookmarks();
     if (
       force ||
@@ -648,7 +658,7 @@ class DocumentRail extends RailView {
     // Always needed now -- the visible-range calculation counts lines too.
     this.refreshSource();
 
-    this.render(this.headings.map((heading: any) => heading.level));
+    this.render(this.headings.map((heading) => heading.level));
     this.el.toggleClass(
       "is-hidden",
       this.headings.length < settings.minHeadings,
@@ -673,7 +683,7 @@ class DocumentRail extends RailView {
     // file once, keeping navigation/file changes from accepting an old result.
     this.view.app.vault
       .cachedRead(file)
-      .then((text: any) => {
+      .then((text) => {
         if (this.sourceEpoch !== epoch || this.view.file !== file) return;
         this.lines = text.split("\n");
         this.sourceReady = this.lines.length > lastHeading;
@@ -777,7 +787,7 @@ class DocumentRail extends RailView {
       first,
       last,
       topLine,
-      progress: scrollRange > 0 ? el.scrollTop / scrollRange : 0,
+      progress: scrollRange > 0 && el ? el.scrollTop / scrollRange : 0,
       scrollable: scrollRange > 2,
       atBottom: this.atBottom(),
       headingStarts:
@@ -785,9 +795,7 @@ class DocumentRail extends RailView {
           ? this.headingLandingStarts()
           : null,
     };
-    const lines = this.headings.map(
-      (heading: any) => heading.position.start.line,
-    );
+    const lines = this.headings.map((heading) => heading.position.start.line);
     if (this.settings.trackingMode === "length" && !viewport.headingStarts) {
       // Do not assign unrelated percentage ranges while layout is unavailable.
       const current = resolveCurrent(

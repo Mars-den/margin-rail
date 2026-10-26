@@ -44,7 +44,7 @@ Export a preset to obtain the complete list of supported setting names. Missing
 values use defaults; unknown keys, invalid types, out-of-range values, and
 unsupported choices are rejected. Custom picker colours use six-digit hex.
 
-Presets contain appearance and behaviour choices. Phone visibility, haptics,
+Presets contain appearance and behaviour choices. Phone visibility,
 cursor placement, destination highlighting, and Workbench navigation are device
 preferences and are not imported or exported. CSS snippet overrides are not
 baked into exported presets.

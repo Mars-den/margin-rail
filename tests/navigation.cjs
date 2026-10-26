@@ -19,6 +19,8 @@ function fixture(levels) {
     getBoundingClientRect() { return this.hidden ? { height: 0 } :
       { top: 16 + i * 24 - rail.el.scrollTop, bottom: 40 + i * 24 - rail.el.scrollTop, height: 24 }; } })),
     attrs, properties, classes, scrollTop: 0,
+    setCssStyles(styles) { Object.assign(this.style,styles); },
+    setCssProps(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); },
     setAttribute(k,v) { attrs[k] = v; }, removeAttribute(k) { delete attrs[k]; },
     toggleClass(k,v) { classes[k] = v; },
     style: { setProperty(k,v) { properties[k] = v; }, removeProperty(k) { delete properties[k]; } },

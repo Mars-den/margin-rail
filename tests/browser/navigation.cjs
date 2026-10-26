@@ -16,6 +16,12 @@ const root = path.resolve(__dirname, '../..');
     await page.evaluate(() => {
       // The small Obsidian DOM extensions used by the actual RailView.
       const p = HTMLElement.prototype;
+        Element.prototype.createSvg = function(tag,o={}) {
+          const el=document.createElementNS('http://www.w3.org/2000/svg',tag);
+          if(o.cls)el.setAttribute('class',o.cls);this.append(el);return el;
+        };
+      p.setCssStyles = function(styles) { Object.assign(this.style, styles); };
+      p.setCssProps = function(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); };
       p.createDiv = function(o = {}) { return this.createEl('div', o); };
       p.createSpan = function(o = {}) { return this.createEl('span', o); };
       p.createEl = function(tag, o = {}) { const el = document.createElement(tag); el.className = o.cls || ''; el.textContent = o.text || ''; this.append(el); return el; };
@@ -517,13 +523,8 @@ const root = path.resolve(__dirname, '../..');
       }
       await page.evaluate(()=>{documentRail.plugin.settings.hoverStyle='none';documentRail.updateSettings();});
       await page.evaluate(()=>{
-        window.hapticEvents=[];
-        window.hapticHeadings=[];
         documentRail.plugin.settings.labelMoveMotion='slide';documentRail.updateSettings();
         window.testDragNow=0;documentRail.dragNow=()=>testDragNow;
-        documentRail.plugin.beginDragHaptics=()=>hapticEvents.push('begin');
-        documentRail.plugin.tickDragHaptics=()=>{hapticEvents.push('tick');hapticHeadings.push(documentRail.dragSectionIndex());};
-        documentRail.plugin.endDragHaptics=()=>hapticEvents.push('end');
       });
       // Unequal sections still select the mark under the drag cursor, with a
       // matching label and no between-mark animation lag.
@@ -539,15 +540,14 @@ const root = path.resolve(__dirname, '../..');
         await page.waitForFunction(index=>documentRail.activeIndex===index,index);
         const aligned=await page.evaluate(y=>({current:documentRail.activeIndex,hover:documentRail.hoveredIndex,
           label:documentRail.flyoutIndex,nearest:documentRail.nearestIndex(y),animations:documentRail.labelAnimations.length,
-          tick:hapticHeadings.at(-1),snap:!!documentRail.dragSnapAnimation}),y);
+          feedbackIndex:documentRail.drag.feedbackIndex,snap:!!documentRail.dragSnapAnimation}),y);
         assert.equal(aligned.hover,index);assert.equal(aligned.label,index);assert.equal(aligned.nearest,index);
-        assert.equal(aligned.tick,index,'Haptic tick identifies the same heading as the cursor and label');
+        assert.equal(aligned.feedbackIndex,index,'Crossing feedback identifies the same heading as the cursor and label');
         assert.equal(aligned.animations,0,'Dragging labels do not glide behind their selected mark');
         assert.equal(aligned.snap,true,'Section crossing provides visual snap feedback');
       }
       await page.mouse.up();
       // Fast skimming drops the holds and feedback but retains alignment.
-      await page.evaluate(()=>{hapticEvents=[];hapticHeadings=[];});
       await page.mouse.move(smallRail.x+smallRail.width/2,firstMark.y+firstMark.height/2);
       await page.mouse.down();
       await page.evaluate(()=>testDragNow+=10);
@@ -556,25 +556,21 @@ const root = path.resolve(__dirname, '../..');
       await page.mouse.move(smallRail.x+smallRail.width/2,fastY);
       await page.waitForFunction(()=>documentRail.activeIndex===2);
       const fast=await page.evaluate(()=>({strength:documentRail.drag.strength,hover:documentRail.hoveredIndex,
-        label:documentRail.flyoutIndex,ticks:hapticHeadings.length,pulse:!!documentRail.dragSnapAnimation,progress:noteScroller.scrollTop}));
+        label:documentRail.flyoutIndex,pulse:!!documentRail.dragSnapAnimation,progress:noteScroller.scrollTop}));
       assert.equal(fast.strength,0,'Fast dragging removes the hold');
-      assert.equal(fast.hover,2);assert.equal(fast.label,2);assert.equal(fast.ticks,0);assert.equal(fast.pulse,false);
+      assert.equal(fast.hover,2);assert.equal(fast.label,2);assert.equal(fast.pulse,false);
       await page.evaluate(()=>testDragNow+=1500);
       await page.mouse.up();
       assert.equal(await page.evaluate(()=>noteScroller.scrollTop),fast.progress,'Releasing after a fast drag does not jump back as snapping restores');
-      await page.evaluate(()=>{delete documentRail.dragNow;hapticEvents=[];hapticHeadings=[];});
+      await page.evaluate(()=>{delete documentRail.dragNow;});
       const dragBox=await page.locator('[role="listbox"]').boundingBox();
       await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+2);
       await page.mouse.down();
       await page.mouse.move(dragBox.x+dragBox.width/2,dragBox.y+dragBox.height-2,{steps:12});
       await page.mouse.up();
-      const haptics=await page.evaluate(()=>hapticEvents);
-      assert.equal(haptics[0],'begin','Actual pointer drag starts haptics');
-      assert.ok(haptics.every(event=>['begin','tick','end'].includes(event)),'Fast pointer drag keeps feedback events bounded');
-      assert.equal(haptics.at(-1),'end','Pointer release stops haptics');
-      const tickCount=haptics.filter(event=>event==='tick').length;
+      assert.equal(await page.evaluate(()=>documentRail.drag===null&&!documentRail.dragSnapAnimation),true,'Pointer release clears drag and visual feedback');
       await page.evaluate(()=>{documentRail.scrubTo(.5);documentRail.activate(1);});
-      assert.equal(await page.evaluate(()=>hapticEvents.filter(event=>event==='tick').length),tickCount,'Non-drag scrolling and heading clicks add no haptics');
+      assert.equal(await page.evaluate(()=>documentRail.dragSnapAnimation),null,'Ordinary scrolling and heading clicks do not pulse');
       await page.evaluate(()=>{
         documentRail.plugin.settings.trackingMode='length';
         headingEls.forEach((heading,index)=>heading.style.top=`${[180,800,830,860][index]}px`);

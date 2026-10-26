@@ -26,7 +26,7 @@ function fixture(mode, reading = false) {
   const view = new MarkdownView();view.file={path:'Synthetic.md'};
   view.app={metadataCache:{getFileCache:()=>({headings})}};
   let rendered;
-  const scroller={style:{scrollBehavior:'smooth'},scrollTop:0,scrollHeight:1000,clientHeight:200};
+  const scroller={setCssStyles(styles){Object.assign(this.style,styles);},style:{scrollBehavior:'smooth'},scrollTop:0,scrollHeight:1000,clientHeight:200};
   const nativeMode={applyScroll(line){view.jumpedLine=line;scroller.scrollTop=line*5;}};
   if(reading)nativeMode.renderer={onRendered(callback){rendered=callback;}};
   view.currentMode=nativeMode;

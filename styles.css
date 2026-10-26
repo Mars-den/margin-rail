@@ -443,7 +443,7 @@
   border-bottom-color: var(--text-normal);
   color: var(--text-normal);
 }
-.scrollspy-settings-header h2 {
+.scrollspy-settings-header .scrollspy-settings-title {
   margin: 0 0 6px;
 }
 .scrollspy-settings-header p {
@@ -451,18 +451,22 @@
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
-.scrollspy-settings-header .setting-item {
+.scrollspy-settings-header .setting-item:not(.scrollspy-settings-title) {
   border-top: 0;
   padding: 10px 0;
 }
-.scrollspy-settings-header .setting-item {
+.scrollspy-settings-header .setting-item:not(.scrollspy-settings-title) {
   flex-wrap: wrap;
 }
-.scrollspy-settings-header .setting-item-info {
+.scrollspy-settings-header
+  .setting-item:not(.scrollspy-settings-title)
+  .setting-item-info {
   min-width: 0;
   flex: 1 1 140px;
 }
-.scrollspy-settings-header .setting-item-control {
+.scrollspy-settings-header
+  .setting-item:not(.scrollspy-settings-title)
+  .setting-item-control {
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;
@@ -833,7 +837,7 @@
   width: 32px;
   padding: 0;
 }
-.scrollspy-settings-header h2 {
+.scrollspy-settings-header .scrollspy-settings-title {
   padding-right: 40px;
 }
 
@@ -918,17 +922,20 @@
   padding-right: 0;
   margin-bottom: 18px;
 }
-.scrollspy-workbench .scrollspy-settings-header h2 {
+.scrollspy-workbench .scrollspy-settings-header .scrollspy-settings-title {
   display: flex;
   align-items: center;
   height: 32px;
   margin: 0 auto 0 0;
   padding: 0;
   font-size: 18px;
+  font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
 }
-.scrollspy-workbench .scrollspy-settings-header > .setting-item {
+.scrollspy-workbench
+  .scrollspy-settings-header
+  > .setting-item:not(.scrollspy-settings-title) {
   display: flex;
   align-items: center;
   padding: 0;
@@ -939,10 +946,16 @@
   min-width: 0;
   min-height: 32px;
 }
-.scrollspy-workbench .scrollspy-settings-header .setting-item-info {
+.scrollspy-workbench
+  .scrollspy-settings-header
+  .setting-item:not(.scrollspy-settings-title)
+  .setting-item-info {
   display: none;
 }
-.scrollspy-workbench .scrollspy-settings-header .setting-item-control {
+.scrollspy-workbench
+  .scrollspy-settings-header
+  .setting-item:not(.scrollspy-settings-title)
+  .setting-item-control {
   position: relative;
   display: flex;
   align-items: center;
@@ -1057,14 +1070,14 @@
 .scrollspy-workbench .scrollspy-preset-update {
   margin: 0 0 12px;
 }
-.scrollspy-workbench .scrollspy-workbench-body {
+.scrollspy-workbench .scrollspy-inspector {
   display: grid;
   grid-template-columns: minmax(150px, 0.9fr) minmax(240px, 1.25fr);
   gap: 24px;
   align-items: start;
 }
-.scrollspy-workbench .scrollspy-stage {
-  height: 300px !important;
+.scrollspy-workbench .scrollspy-preview-column .scrollspy-stage {
+  height: 300px;
   padding: 0;
   position: relative;
   overflow: visible;
@@ -1079,7 +1092,6 @@
   overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 22px 55px 22px 18px;
-  scrollbar-width: thin;
   border-radius: var(--radius-m);
 }
 .scrollspy-workbench .scrollspy-preview-note::-webkit-scrollbar {
@@ -1134,14 +1146,11 @@
   color: var(--text-muted);
   font-size: 11px;
 }
-.scrollspy-workbench .scrollspy-inspector {
-  display: contents;
-}
 .scrollspy-workbench .scrollspy-settings-section {
   grid-column: 1 / -1;
   min-width: 0;
 }
-.scrollspy-workbench .scrollspy-settings-section:first-child {
+.scrollspy-workbench .scrollspy-preview-column + .scrollspy-settings-section {
   grid-column: 2;
   grid-row: 1;
 }
@@ -1156,7 +1165,7 @@
   min-height: 28px;
   margin-bottom: 4px;
 }
-.scrollspy-workbench .scrollspy-section-header h3 {
+.scrollspy-workbench .scrollspy-section-header .scrollspy-section-heading {
   margin: 0;
   padding: 0;
   font-size: 12px;
@@ -1324,7 +1333,7 @@
   transition: none;
 }
 @media (max-width: 720px) {
-  .scrollspy-workbench .scrollspy-workbench-body {
+  .scrollspy-workbench .scrollspy-inspector {
     gap: 16px;
     grid-template-columns: minmax(135px, 0.85fr) minmax(215px, 1.2fr);
   }
@@ -1333,19 +1342,19 @@
   .scrollspy-workbench .scrollspy-settings-header {
     flex-wrap: wrap;
   }
-  .scrollspy-workbench .scrollspy-settings-header h2 {
+  .scrollspy-workbench .scrollspy-settings-header .scrollspy-settings-title {
     flex: 1 1 100%;
   }
-  .scrollspy-workbench .scrollspy-workbench-body {
+  .scrollspy-workbench .scrollspy-inspector {
     grid-template-columns: 1fr;
   }
-  .scrollspy-workbench .scrollspy-settings-section:first-child,
+  .scrollspy-workbench .scrollspy-preview-column + .scrollspy-settings-section,
   .scrollspy-workbench .scrollspy-preview-column {
     grid-column: 1;
     grid-row: auto;
   }
-  .scrollspy-workbench .scrollspy-stage {
-    height: 180px !important;
+  .scrollspy-workbench .scrollspy-preview-column .scrollspy-stage {
+    height: 180px;
   }
   .scrollspy-workbench .scrollspy-panel .setting-item {
     flex-wrap: nowrap;
@@ -1490,4 +1499,38 @@
   opacity: var(--ss-focus-opacity);
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
+}
+
+/* Keep native Setting headings aligned with the compact Workbench layout. */
+.scrollspy-workbench .scrollspy-settings-title,
+.scrollspy-workbench .scrollspy-section-heading {
+  flex: 1;
+  gap: 0;
+  border: 0;
+  background: transparent;
+}
+.scrollspy-workbench .scrollspy-settings-title .setting-item-info,
+.scrollspy-workbench .scrollspy-section-heading .setting-item-info {
+  margin: 0;
+  padding: 0;
+}
+.scrollspy-workbench .scrollspy-settings-title .setting-item-name,
+.scrollspy-workbench .scrollspy-section-heading .setting-item-name {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  line-height: inherit;
+}
+.scrollspy-workbench .scrollspy-settings-title .setting-item-control,
+.scrollspy-workbench .scrollspy-section-heading .setting-item-control,
+.scrollspy-workbench .scrollspy-settings-title .setting-item-description,
+.scrollspy-workbench .scrollspy-section-heading .setting-item-description {
+  display: none;
+}
+
+.scrollspy-workbench-host.setting-item {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
 }

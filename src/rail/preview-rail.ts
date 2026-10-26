@@ -97,8 +97,10 @@ class PreviewRail extends RailView {
       s.hoverStyle === "dot" ? s.expandHeight : 0,
     );
     const inset = Math.max(18, s.edgeOffset + width + 14);
-    this.scroller.style.paddingLeft = `${s.side === "left" ? inset : 18}px`;
-    this.scroller.style.paddingRight = `${s.side === "left" ? 18 : inset}px`;
+    this.scroller.setCssStyles({
+      paddingLeft: `${s.side === "left" ? inset : 18}px`,
+      paddingRight: `${s.side === "left" ? 18 : inset}px`,
+    });
     this.fitPane();
     this.syncActive();
   }

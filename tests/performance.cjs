@@ -10,6 +10,7 @@ const context = { module: { exports: {} },
   ResizeObserver: class { observe() {} disconnect() { this.disconnected = true; } },
   setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
   clearTimeout(id) { timers.delete(id); }, cancelAnimationFrame() {} };
+context.window = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8') +
   '\nmodule.exports.internals = { DEFAULTS, SESSION_DEFAULTS, DocumentRail };', context);
@@ -22,18 +23,23 @@ function style() {
 function documentFixture() {
   const frames = new Map(); let frameId = 0;
   const listeners = new Set();
-  const doc = { frames, listeners,
+  const ownerTimers = new Map(); let ownerTimerId = 0;
+  const doc = { frames, listeners, timers: ownerTimers,
     addEventListener(type, fn) { listeners.add(fn); },
     removeEventListener(type, fn) { listeners.delete(fn); }, defaultView: {
+    setTimeout(fn) { ownerTimers.set(++ownerTimerId, fn); return ownerTimerId; },
+    clearTimeout(id) { ownerTimers.delete(id); },
     requestAnimationFrame(fn) { frames.set(++frameId, fn); return frameId; },
     cancelAnimationFrame(id) { frames.delete(id); }, matchMedia() { return { matches: false }; }
-  }, body: { style: style() } };
+  }, body: { style: style(), setCssProps(props) { for (const [key,value] of Object.entries(props)) { if(value) this.style.setProperty(key,value); else this.style.removeProperty(key); } } } };
   doc.flush = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn()); };
   return doc;
 }
 function element(doc) {
   const classes = new Set(), events = new Map();
   const el = { ownerDocument: doc, dataset: {}, style: style(), children: [], clientWidth: 900,
+    setCssStyles(styles) { Object.assign(this.style,styles); },
+    setCssProps(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); },
     classList: { contains: k => classes.has(k), add: k => classes.add(k), remove: k => classes.delete(k),
       toggle(k, v) { if (v) classes.add(k); else classes.delete(k); } },
     addClass(k) { classes.add(k); }, removeClass(k) { classes.delete(k); },
@@ -78,6 +84,13 @@ function viewFixture(doc, name) {
   assert.deepEqual(a.el.children, originalTicks);
   assert.equal(main.frames.size, 1); assert.equal(popout.frames.size, 1);
   main.flush(); popout.flush();
+
+  // Each rail's delayed label dismissal belongs to its own window.
+  a.scheduleLeave(); b.scheduleLeave();
+  assert.equal(main.timers.size, 1); assert.equal(popout.timers.size, 1);
+  assert.equal(timers.size, 0, 'Rail dismissal never uses the plugin window timer');
+  a.cancelLeave(); assert.equal(main.timers.size, 0); assert.equal(popout.timers.size, 1);
+  b.cancelLeave(); assert.equal(popout.timers.size, 0);
 
   // Section tracking measures only the sections containing headings, once per frame.
   plugin.settings.trackingMode = "length";

@@ -1,12 +1,6 @@
 import type { Settings } from "./settings/model";
 import type { RailView } from "./rail/rail-view";
-import {
-  Plugin,
-  MarkdownView,
-  Notice,
-  Platform,
-  resolveSubpath,
-} from "obsidian";
+import { Plugin, MarkdownView, Notice, resolveSubpath } from "obsidian";
 import {
   DEFAULTS,
   SESSION_DEFAULTS,
@@ -18,24 +12,23 @@ import {
 } from "./settings/model";
 import { ScrollspySettingTab } from "./settings/settings-tab";
 import { DocumentRail } from "./rail/document-rail";
-import { MacDragHaptics } from "./integrations/haptics";
 export default class ScrollspyRailPlugin extends Plugin {
-  declare settings: Settings & Record<string, any>;
+  declare settings: Settings;
   declare cleanedDocuments: WeakSet<Document>;
   declare rails: Map<MarkdownView, DocumentRail>;
   declare settingTab: ScrollspySettingTab;
-  declare dragHaptics: MacDragHaptics;
-  declare settingsTimer: number | NodeJS.Timeout;
+  declare settingsTimer: number;
   declare settingsWrite: Promise<void> | undefined;
   declare previewBookmarks: Set<number> | undefined;
 
   async onload() {
     this.rails = new Map();
+    const loaded: unknown = await this.loadData();
     this.settings = Object.assign(
       {},
       DEFAULTS,
       SESSION_DEFAULTS,
-      await this.loadData(),
+      loaded && typeof loaded === "object" ? loaded : {},
     );
 
     normalizeLegacySettings(this.settings);
@@ -53,21 +46,24 @@ export default class ScrollspyRailPlugin extends Plugin {
       await this.saveData(this.settings);
     }
 
-    this.refresh = this.refresh.bind(this);
     this.settingTab = new ScrollspySettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
     this.applyStyles(); // Clear body variables left by an older hot-reloaded version.
 
     // layout-change covers pane splits, closes, and reading/editing mode switches.
-    this.registerEvent(this.app.workspace.on("layout-change", this.refresh));
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", this.refresh),
+      this.app.workspace.on("layout-change", () => this.refresh()),
     );
-    this.registerEvent(this.app.workspace.on("file-open", this.refresh));
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.refresh()),
+    );
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => this.refresh()),
+    );
     this.registerEvent(
       this.app.workspace.on("css-change", () => {
         for (const rail of this.rails.values()) rail.updateSettings();
-        if (this.settingTab?.preview) this.settingTab.display();
+        if (this.settingTab?.preview) this.settingTab.renderWorkbench();
       }),
     );
 
@@ -85,7 +81,7 @@ export default class ScrollspyRailPlugin extends Plugin {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         const rail = view ? this.rails.get(view) : null;
         if (!view || !rail) {
-          new Notice("Margin Rail: open a Markdown note first.");
+          new Notice("Open a Markdown note first.");
           return;
         }
         const count = rail.headings.length;
@@ -105,7 +101,7 @@ export default class ScrollspyRailPlugin extends Plugin {
     // Rebuild only the panes showing the edited file, so typing a heading
     // updates its own rail without touching the others.
     this.registerEvent(
-      this.app.metadataCache.on("changed", (file: any) => {
+      this.app.metadataCache.on("changed", (file) => {
         for (const [view, rail] of this.rails) {
           if (view.file?.path === file.path) rail.rebuild();
         }
@@ -113,67 +109,54 @@ export default class ScrollspyRailPlugin extends Plugin {
     );
 
     this.installHeadingNavigation();
-    this.app.workspace.onLayoutReady(this.refresh);
-  }
-
-  beginDragHaptics(rail: any) {
-    if (
-      !this.settings.macDragHaptics ||
-      !Platform?.isMacOS ||
-      !Platform?.isDesktopApp
-    )
-      return;
-    if (!this.dragHaptics) {
-      try {
-        // Keep Node imports behind the desktop guard so mobile never loads them.
-        this.dragHaptics = new MacDragHaptics(require("child_process").spawn);
-      } catch (_) {
-        return;
-      }
-    }
-    this.dragHaptics.begin(rail);
-  }
-
-  tickDragHaptics(rail: any) {
-    if (this.settings.macDragHaptics) this.dragHaptics?.tick(rail);
-  }
-
-  endDragHaptics(rail: any) {
-    this.dragHaptics?.end(rail);
+    this.app.workspace.onLayoutReady(() => this.refresh());
   }
 
   installHeadingNavigation() {
     const proto = MarkdownView?.prototype;
-    const original = proto?.setEphemeralState;
-    if (typeof original !== "function" || typeof resolveSubpath !== "function")
+    const candidate: unknown =
+      proto &&
+      Object.getOwnPropertyDescriptor(proto, "setEphemeralState")?.value;
+    if (typeof candidate !== "function" || typeof resolveSubpath !== "function")
       return;
-    const plugin = this;
+    const original = candidate as (
+      this: MarkdownView,
+      state: unknown,
+      ...args: unknown[]
+    ) => unknown;
+    const rails = this.rails;
+    const refresh = () => this.refresh();
+    const trackingMode = () => this.settings.trackingMode;
     let enabled = true;
-    function navigate(this: MarkdownView, state: any, ...args: unknown[]) {
+    function navigate(this: MarkdownView, state: unknown, ...args: unknown[]) {
+      const data =
+        state && typeof state === "object"
+          ? (state as Record<string, unknown>)
+          : null;
       if (
         enabled &&
-        state &&
-        ["subpath", "line", "scroll"].some((key: any) =>
-          Object.prototype.hasOwnProperty.call(state, key),
+        data &&
+        ["subpath", "line", "scroll"].some((key) =>
+          Object.prototype.hasOwnProperty.call(data, key),
         )
       ) {
-        plugin.rails.get(this)?.cancelHeadingNavigation();
+        rails.get(this)?.cancelHeadingNavigation();
       }
       // Preserve native focus, cursor, history and heading resolution first.
-      const result = Reflect.apply(original, this, [state, ...args]);
+      const result: unknown = Reflect.apply(original, this, [state, ...args]);
       if (
         !enabled ||
-        !["length", "equal"].includes(plugin.settings.trackingMode) ||
-        typeof state?.subpath !== "string" ||
+        !["length", "equal"].includes(trackingMode()) ||
+        typeof data?.subpath !== "string" ||
         !this.file
       )
         return result;
       const cache = this.app.metadataCache.getFileCache(this.file);
       if (!cache) return result;
-      const target = resolveSubpath(cache, state.subpath);
+      const target = resolveSubpath(cache, data.subpath);
       if (target?.type !== "heading") return result;
-      plugin.refresh();
-      plugin.rails.get(this)?.queueHeadingNavigation(target.start.line);
+      refresh();
+      rails.get(this)?.queueHeadingNavigation(target.start.line);
       return result;
     }
     proto.setEphemeralState = navigate;
@@ -186,33 +169,31 @@ export default class ScrollspyRailPlugin extends Plugin {
   }
 
   onunload() {
-    this.dragHaptics?.end();
-    this.flushSettings();
+    void this.flushSettings();
     this.settingTab?.hide();
     for (const rail of this.rails.values()) rail.destroy();
     this.rails.clear();
   }
 
   saveSettings() {
-    if (!this.settings.macDragHaptics) this.dragHaptics?.end();
     // Paint immediately; persist only once a slider has settled.
     for (const rail of this.rails.values()) rail.updateSettings();
-    if (this.settingsTimer) clearTimeout(this.settingsTimer);
-    this.settingsTimer = setTimeout(() => this.flushSettings(), 250);
+    if (this.settingsTimer) window.clearTimeout(this.settingsTimer);
+    this.settingsTimer = window.setTimeout(() => {
+      void this.flushSettings();
+    }, 250);
   }
 
   flushSettings() {
     if (!this.settingsTimer) return this.settingsWrite;
-    clearTimeout(this.settingsTimer);
+    window.clearTimeout(this.settingsTimer);
     this.settingsTimer = 0;
-    const snapshot = JSON.parse(JSON.stringify(this.settings));
+    const snapshot: unknown = JSON.parse(JSON.stringify(this.settings));
     // Serialize writes so an older save cannot overwrite a newer snapshot.
     this.settingsWrite = (this.settingsWrite || Promise.resolve())
       .then(() => this.saveData(snapshot))
       .catch(() => {
-        new Notice(
-          "Margin Rail: could not save settings. Try changing the setting again.",
-        );
+        new Notice("Could not save preferences. Try changing the value again.");
       });
     return this.settingsWrite;
   }
@@ -225,7 +206,10 @@ export default class ScrollspyRailPlugin extends Plugin {
     const win = rail?.host.ownerDocument.defaultView;
     if (rail && typeof win?.getComputedStyle === "function") {
       const css = win.getComputedStyle(rail.el);
-      for (const [key, token] of Object.entries(PUBLIC_CSS)) {
+      for (const key of Object.keys(
+        PUBLIC_CSS,
+      ) as (keyof typeof PUBLIC_CSS)[]) {
+        const token = PUBLIC_CSS[key];
         const text = css.getPropertyValue(`--margin-rail-${token}`).trim(),
           rule = NUMBER_RULES[key];
         const pixel = rule[3] === "px";
@@ -283,11 +267,13 @@ export default class ScrollspyRailPlugin extends Plugin {
       (typeof document !== "undefined" ? document : null);
     if (doc?.body && !(this.cleanedDocuments ||= new WeakSet()).has(doc)) {
       // Migrate the old global scope without touching unrelated inline styles.
-      for (const name of Object.keys(vars)) doc.body.style.removeProperty(name);
+      doc.body.setCssProps(
+        Object.fromEntries(Object.keys(vars).map((name) => [name, ""])),
+      );
       this.cleanedDocuments.add(doc);
     }
     if (!rail) return;
-    for (const state of ["idle", "passed", "pointed", "focus"]) {
+    for (const state of ["idle", "passed", "pointed", "focus"] as const) {
       const mode =
         state === "idle" && s.idleColorMode === "inherit"
           ? "text"
@@ -304,14 +290,11 @@ export default class ScrollspyRailPlugin extends Plugin {
       rail.el.dataset[`${state}ColorMode`] = mode || "text";
     }
     rail.flyout.dataset.surface = s.labelSurface || "theme";
-    for (const el of [rail.el, rail.flyout]) {
-      for (const [name, value] of Object.entries(vars))
-        el.style.setProperty(name, value);
-    }
+    for (const el of [rail.el, rail.flyout]) el.setCssProps(vars);
   }
 
-  refresh(force: any = false, checkMetadata: any = false) {
-    const live = new Set();
+  refresh(force = false, checkMetadata = false) {
+    const live = new Set<MarkdownView>();
 
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;

@@ -45,7 +45,6 @@ for (const values of [
   { trackingMode: "surprise" },
   { customColor: "not a color" },
   { phoneVisibility: "always" },
-  { macDragHaptics: true },
   { unexpected: 1 },
 ])
   assert.throws(() => validatePreset({ version: 1, name: "Bad", values }));
@@ -59,7 +58,6 @@ for (const input of [
 ])
   assert.throws(() => validatePreset(input));
 assert.ok(!PRESET_KEYS.includes("phoneVisibility"));
-assert.ok(!PRESET_KEYS.includes("macDragHaptics"));
 assert.equal(
   Object.keys(
     validatePreset({ version: 1, name: "Default", values: DEFAULTS }).values,

@@ -19,6 +19,12 @@ const root = path.resolve(__dirname, '../..');
       await page.addStyleTag({path:path.join(root,'styles.css')});
       await page.evaluate(() => {
         const p = HTMLElement.prototype;
+        Element.prototype.createSvg = function(tag,o={}) {
+          const el=document.createElementNS('http://www.w3.org/2000/svg',tag);
+          if(o.cls)el.setAttribute('class',o.cls);this.append(el);return el;
+        };
+      p.setCssStyles = function(styles) { Object.assign(this.style, styles); };
+      p.setCssProps = function(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); };
         p.createDiv = function(o) { return this.createEl('div',o); };
         p.createSpan = function(o) { return this.createEl('span',o); };
         p.createEl = function(tag,o={}) { const el=document.createElement(tag);el.className=o.cls||'';el.textContent=o.text||'';this.append(el);return el; };

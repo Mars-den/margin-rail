@@ -85,7 +85,7 @@ const { headingSubpath, findHeadingBookmark, bookmarksCore, DocumentRail, RailVi
   assert.equal(button.flyoutBookmark.attrs['aria-label'], 'Remove heading bookmark');
   const hover = Object.create(RailView.prototype);
   hover.plugin = { settings: { showBookmarkButton: true, showLabels: true } };
-  hover.host = { ownerDocument: {} };
+  hover.host = { ownerDocument: { defaultView: context } };
   hover.flyout = { contains: () => false };
   let closed = 0; hover.onLeave = () => closed++;
   hover.scheduleLeave();

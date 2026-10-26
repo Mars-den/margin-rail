@@ -95,7 +95,6 @@ export interface SessionSettings {
   phoneVisibility: string;
   placeCursorOnNavigate: boolean;
   highlightOnNavigate: boolean;
-  macDragHaptics: boolean;
   settingsState: string;
 }
 export type RailSettings = typeof DEFAULTS;
@@ -108,7 +107,6 @@ export const SESSION_DEFAULTS: SessionSettings = {
   phoneVisibility: "hidden", // hidden | landscape | always; independent of presets
   placeCursorOnNavigate: false,
   highlightOnNavigate: false,
-  macDragHaptics: false,
   settingsState: "current",
 };
 
@@ -223,7 +221,7 @@ export const WORKBENCH_GROUPS: Record<string, Record<string, string>> = {
   placement: { position: "Position", visibility: "Visibility" },
 };
 
-export const PUBLIC_CSS: Partial<Record<keyof RailSettings, string>> = {
+export const PUBLIC_CSS = {
   tickWidth: "mark-width",
   tickHeight: "mark-height",
   tickRadius: "mark-radius",
@@ -242,7 +240,7 @@ export const PUBLIC_CSS: Partial<Record<keyof RailSettings, string>> = {
   labelPadding: "label-padding",
   labelRadius: "label-radius",
   labelOffset: "label-distance",
-};
+} as const satisfies Partial<Record<keyof RailSettings, string>>;
 
 export function validatePreset(input: unknown): {
   name: string;
@@ -262,7 +260,9 @@ export function validatePreset(input: unknown): {
   )
     throw Error("Use a version 1 preset with a name and values.");
   const values: Record<string, unknown> = { ...DEFAULTS };
-  for (const [key, original] of Object.entries(data.values)) {
+  for (const [key, original] of Object.entries(
+    data.values as Record<string, unknown>,
+  )) {
     const value =
       key === "idleColorMode" && original === "inherit" ? "text" : original;
     if (!Object.hasOwn(DEFAULTS, key))

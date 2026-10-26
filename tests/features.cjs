@@ -31,7 +31,11 @@ assert.equal(scrubProgress(400, 100, 300), 1);
 
 const style = () => ({ values: {}, setProperty(key, value) { this.values[key] = value; },
   getPropertyValue(key) { return this.values[key] || ''; }, removeProperty(key) { delete this.values[key]; } });
-const tick = center => ({ hidden: false, style: style(), classList: { toggle() {} },
+const cssHelpers = {
+  setCssStyles(styles) { Object.assign(this.style,styles); },
+  setCssProps(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); },
+};
+const tick = center => ({ ...cssHelpers, hidden: false, style: style(), classList: { toggle() {} },
   getBoundingClientRect() { return this.hidden ? { top: 0, height: 0 } : { top: center - 5, height: 10 }; } });
 function rail() {
   const r = Object.create(RailView.prototype);
@@ -39,7 +43,7 @@ function rail() {
   r.levels = [1, 2, 2]; r.centers = []; r.waveFrame = 0; r.drag = null;
   r.activeIndex = 0; r.expandedBranch = -1; r.hoveredIndex = -1;
   r.flyout = { toggleClass() {}, addClass() {}, removeClass() {} };
-  r.el = { children: [tick(100), tick(200), tick(300)], style: style(),
+  r.el = { ...cssHelpers, children: [tick(100), tick(200), tick(300)], style: style(),
     addClass() {}, removeClass() {}, toggleClass() {}, capture: null,
     setPointerCapture(id) { this.capture = id; }, hasPointerCapture(id) { return this.capture === id; },
     releasePointerCapture() { this.capture = null; }, getBoundingClientRect: () => ({ top: 90, bottom: 310 }) };
@@ -76,7 +80,7 @@ assert.equal(hidden.el.children[0].style.values['--ss-section-progress'], '25.00
 hidden.paintProgress(0.75);
 assert.equal(hidden.el.children[0].style.values['--ss-section-progress'], '75.00%');
 const doc = Object.create(DocumentRail.prototype);
-doc.scroller = { style: { scrollBehavior: 'smooth' }, scrollTop: 0, scrollHeight: 1000, clientHeight: 200 };
+doc.scroller = { ...cssHelpers, style: { scrollBehavior: 'smooth' }, scrollTop: 0, scrollHeight: 1000, clientHeight: 200 };
 let updates = 0; doc.syncActive = () => updates++;
 doc.scrubTo(0.25);
 assert.equal(doc.scroller.scrollTop, 200);

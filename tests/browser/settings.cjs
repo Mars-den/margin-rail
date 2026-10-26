@@ -31,6 +31,8 @@ const root = path.resolve(__dirname, '../..');
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'styles.css'), 'utf8') });
     await page.evaluate(() => {
       const p = HTMLElement.prototype;
+      p.setCssStyles = function(styles) { Object.assign(this.style, styles); };
+      p.setCssProps = function(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); };
       p.createDiv = function(o = {}) { return this.createEl('div', o); };
       p.createSpan = function(o = {}) { return this.createEl('span', o); };
       p.createEl = function(tag, o = {}) { const e = document.createElement(tag); e.className = o.cls || ''; e.textContent = o.text || ''; if(o.type)e.type=o.type; this.append(e); return e; };
@@ -64,7 +66,7 @@ const root = path.resolve(__dirname, '../..');
         onChange(fn) {this.change=fn;return this;}
       }
       class Setting {
-        constructor(parent) { this.settingEl=parent.createDiv({cls:'setting-item'});this.info=this.settingEl.createDiv({cls:'setting-item-info'});this.name=this.info.createDiv({cls:'setting-item-name'});this.desc=this.info.createDiv({cls:'setting-item-description'});this.controlEl=this.settingEl.createDiv({cls:'setting-item-control'}); }
+        constructor(parent) { this.settingEl=parent.createDiv({cls:'setting-item'});this.info=this.settingEl.createDiv({cls:'setting-item-info'});this.name=this.nameEl=this.info.createDiv({cls:'setting-item-name'});this.desc=this.info.createDiv({cls:'setting-item-description'});this.controlEl=this.settingEl.createDiv({cls:'setting-item-control'}); }
         setName(v) { this.name.textContent=v;return this; } setDesc(v) { this.desc.textContent=v;return this; }
         setHeading() { this.settingEl.addClass('setting-item-heading');return this; }
         addDropdown(fn) { fn(new Component(this.controlEl.createEl('select',{cls:'dropdown'})));return this; }
@@ -78,6 +80,7 @@ const root = path.resolve(__dirname, '../..');
         addItem(fn){const item={setTitle(v){this.title=v;return this;},setChecked(){return this;},onClick(fn){this.click=fn;return this;}};fn(item);this.items.push(item);return this;}
         showAtMouseEvent(){const menu=document.body.createDiv();menu.setAttribute('role','menu');for(const item of this.items){const b=menu.createEl('button',{text:item.title});b.setAttribute('role','menuitem');b.onclick=()=>{menu.remove();item.click();};}}
       }
+      window.createEl = (tag, options) => document.body.createEl(tag, options);
       window.module = {exports:{}};
       window.testPlatform={isMacOS:true,isDesktopApp:true};
       window.require = () => ({Platform:testPlatform,Plugin:class {}, PluginSettingTab:class {constructor(){this.containerEl=document.querySelector('#settings');}},Setting,Menu,Notice:class {},setIcon(){}});
@@ -103,7 +106,7 @@ const root = path.resolve(__dirname, '../..');
     const number = async (key,value) => {const input=field(key).locator('input[type=number]');await input.fill(String(value));await input.press('Tab');};
     const group = value => page.locator(`.scrollspy-settings-section[data-group="${value}"]`).scrollIntoViewIfNeeded();
     await group('navigation');
-    const haptics=field('macDragHaptics').getByRole('checkbox');await haptics.check();
+    const deviceHighlight=field('highlightOnNavigate').getByRole('checkbox');await deviceHighlight.check();
     assert.equal(await page.evaluate(()=>plugin.settings.activePreset),'default','Device edits do not dirty presets');
     // Real keyboard activation survives the redraw and reaches newly revealed controls.
     await group('tracking');
@@ -133,7 +136,7 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),31);
     // Full presets leave device preferences alone.
     await page.locator('.scrollspy-settings-header select').selectOption('builtin-absolutely');
-    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
+    assert.equal(await page.evaluate(()=>plugin.settings.highlightOnNavigate),true);
     assert.equal(await page.locator('select[data-setting=activePreset]').evaluate(el=>el===document.activeElement),true,'Preset changes preserve focus');
     await page.getByRole('button',{name:'Dot',exact:true}).click();
     assert.equal(await page.getByRole('button',{name:'Dot',exact:true}).evaluate(el=>el===document.activeElement),true,'Shape changes preserve focus');
@@ -174,6 +177,11 @@ const root = path.resolve(__dirname, '../..');
           assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${tab} at ${width}`);
           assert.ok(await section.locator('.setting-item').count()>0);
           assert.equal(await section.getByRole('heading').count(),1);
+          if(index===0 && width===800) {
+            const preview=await page.locator('.scrollspy-preview-column').boundingBox();
+            const box=await section.boundingBox();
+            assert.ok(Math.abs(box.y-preview.y)<1 && box.x>preview.x+preview.width,'Main controls sit beside the preview');
+          }
           if(index>0) {
             const full=await page.locator('.scrollspy-workbench-body').boundingBox();
             const box=await section.boundingBox();
@@ -195,14 +203,14 @@ const root = path.resolve(__dirname, '../..');
     await group('json');
     const json=page.getByRole('textbox',{name:'Preset JSON',exact:true});
     const exported=JSON.parse(await json.inputValue());
-    assert.equal('macDragHaptics' in exported.values,false);assert.equal('phoneVisibility' in exported.values,false);
+    assert.equal('highlightOnNavigate' in exported.values,false);assert.equal('phoneVisibility' in exported.values,false);
     await json.fill(JSON.stringify({...exported,values:{...exported.values,tickWidth:900}}));
     await page.getByRole('button',{name:'Load as preset',exact:true}).click();
     assert.match(await page.getByRole('alert').innerText(),/Out of range/);
     await json.fill(JSON.stringify({...exported,name:'Imported'}));
     await page.getByRole('button',{name:'Load as preset',exact:true}).click();
     assert.equal(await page.evaluate(()=>plugin.settings.presets.at(-1).name),'Imported');
-    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
+    assert.equal(await page.evaluate(()=>plugin.settings.highlightOnNavigate),true);
     // Placeholder content stays out of the rail's expanded lane on either side.
     for (const width of [800,390]) {
       await page.setViewportSize({width,height:1000});
@@ -227,6 +235,22 @@ const root = path.resolve(__dirname, '../..');
         if(width===800) assert.equal(await page.locator('.scrollspy-stage').evaluate(el=>el.clientHeight),300);
       }
     }
+    // Native declarative rendering remains searchable and owns its preview cleanup.
+    await page.evaluate(() => {
+      tab.hide();tab.containerEl.empty();
+      const definitions = tab.getSettingDefinitions();
+      window.nativeDefinition = definitions[0];
+      window.nativeCleanup = nativeDefinition.render(new (require().Setting)(tab.containerEl));
+    });
+    assert.ok((await page.evaluate(()=>nativeDefinition.aliases)).includes('bookmark'));
+    assert.equal(await page.locator('.scrollspy-workbench-host .scrollspy-stage').count(),1);
+    await page.getByRole('tab',{name:'Labels',exact:true}).click();
+    assert.equal(await page.locator('.scrollspy-stage').count(),1,'Internal redraw stays inside the native definition host');
+    await page.setViewportSize({width:800,height:1000});
+    await page.getByRole('tab',{name:'Rail',exact:true}).click();
+    if(process.env.RAIL_SETTINGS_SCREENSHOT) await page.screenshot({path:process.env.RAIL_SETTINGS_SCREENSHOT,fullPage:true});
+    await page.evaluate(()=>nativeCleanup());
+    assert.equal(await page.evaluate(()=>tab.preview),null,'Native cleanup releases the latest preview after internal redraw');
     assert.deepEqual(errors,[]);await page.evaluate(()=>tab.hide());
     console.log('Workbench checks passed: visible sections, exact controls, presets, isolated device preferences, native scrolling, CSS geometry, validated JSON, and phone/desktop layouts.');
   } finally { await browser.close(); }
