@@ -4,9 +4,12 @@ Find your place in a long note without opening a sidebar. Margin Rail is a
 **scrollspy**: a slim set of heading markers along the edge of your note.
 Hover for a preview, click to jump, or drag to scroll. Works while reading and editing.
 
-[![Margin Rail in action: scrolling, heading previews, and bookmarks](images/showcase.gif)](https://github.com/Mars-den/margin-rail/blob/main/images/margin-showcase.mp4)
+[![Margin Rail 1.3: navigation, bookmarks, presets, and Workbench settings](images/showcase.gif)](https://github.com/Mars-den/margin-rail/blob/main/images/margin-showcase.mp4)
 
-[Watch the full video](https://github.com/Mars-den/margin-rail/blob/main/images/margin-showcase.mp4).
+[Watch the full 33-second showcase](https://github.com/Mars-den/margin-rail/blob/main/images/margin-showcase.mp4).
+
+The settings include a live preview and saved presets.
+[See how to customize your rail](#make-it-yours).
 
 ## Install
 
@@ -48,7 +51,21 @@ You can show or hide the bookmark button under **Settings → Margin Rail → La
 ## Make it yours
 
 Open **Settings → Margin Rail** to adjust the look and behaviour. Changes appear
-immediately in the live preview and your open notes. Start with a preset:
+immediately in the live preview and your open notes.
+
+1. Choose a preset for a starting point.
+2. Adjust the controls in Rail, Behaviour, Labels, or Placement.
+3. Scroll the preview note, or click and drag its rail to try the result.
+4. Use the header menu → Save preset as… to keep your setup.
+
+| Tab | What you can change |
+|---|---|
+| **Rail** | Mark shape, state colours and emphasis, and heading hierarchy. |
+| **Behaviour** | Tracking, section progress, hover effects, dragging, and navigation. |
+| **Labels** | Heading text, excerpts, percentages, bookmarks, appearance, and motion. |
+| **Placement** | Side, vertical position, pane width, heading minimum, and phone visibility. |
+
+Presets include appearance and behaviour from every tab:
 
 | Preset | What it looks and feels like |
 |---|---|
@@ -58,41 +75,56 @@ immediately in the live preview and your open notes. Start with a preset:
 | **Outline** | Indented bars and heading-level labels to show your note’s structure. |
 | **Progress** | Equal scroll shares, square marks with a hover swell, and section progress filling from right to left. |
 
-Use **Normal** for named choices for mark shape, length, spacing, emphasis, hover,
-labels, and placement. **Advanced** exposes individual sliders and exact numeric
-inputs. Both edit the same values: Normal shows a matching choice automatically,
-or **Custom** when the values do not match. Switching modes preserves your setup.
+The Workbench keeps a scrollable note preview beside clearly labelled settings sections.
+Choose **Rail**, **Behaviour**, **Labels**, or **Placement** to see its controls
+together, grouped by purpose. Main controls sit beside the preview; remaining
+sections span the full width below it. Compact number fields provide
+exact values without filling the page with sliders.
+
+![Margin Rail Workbench settings](images/workbench.png)
+
+Rail states have independent colour, opacity, and length controls. Labels have
+separate content, appearance, and motion groups. Reset a section with
+the reset button beside its heading.
 
 Hover options include **Still**, **Swell**, **Heading badge**, **Focus** (frame the
 pointed mark and dim its neighbours), and **Dot** (morph the mark into a circle).
-Advanced lets you tune the badge and dot sizes. Labels have separate **Show and
-hide** (**None**, **Fade**, **Slide**) and **Between marks** (**None**, **Slide**)
-animations, with speed choices in Normal and exact durations in Advanced. Label
+The Hover section lets you tune the badge and dot sizes. Labels have separate
+**Show and hide** (**Instant**, **Fade**, **Slide**) and **Between marks** (**Instant**, **Slide**)
+animations, with exact durations in the Motion group. Label
 animations respect reduced motion. Absolutely uses Slide for both; Progress
 keeps both off.
 
 Align marks to the left, centre, right, or the rail’s side. Section progress can
 fill from left to right, right to left, or outward from the centre.
 
-Use **Save as…** to name a new preset. The preset options menu holds reset and
-delete actions. Changes to a preset show as **Custom (unsaved)** until you save them.
+Use **Preset options → Save preset as…** to name a new preset. The same menu
+holds reset, delete, CSS snippet, and preset JSON actions. Changes to a preset
+show as **Custom (unsaved)** until you save them.
 **Update** appears after edits and saves over the preset you started from; use its dropdown to choose
 another saved preset. Updating a built-in creates a local copy. If the starting
 preset is unknown or was deleted, choose a destination before updating.
 Your phone visibility choice stays the same when switching presets.
 
+For customization beyond the controls, open **Preset options → CSS snippets and
+preset JSON…**. Export or load versioned JSON presets, or use Obsidian CSS
+snippets. See [customization reference](docs/CUSTOMIZATION.md) for supported
+variables and file format. Phone visibility and device preferences stay separate
+from imported presets.
+
 ## How headings follow your scrolling
 
-Choose a rule under **Behaviour → Scroll tracking** and try it with the preview’s scroll slider.
+Choose a rule under **Behaviour → Tracking** and scroll the preview note to try it.
+**Section length · Recommended** is the first option.
 
 | Setting | What happens |
 |---|---|
-| **Follow the note** | A heading becomes current when it reaches the top of the note area. |
-| **By section length** | Longer sections stay current for more of your scrolling. Every heading gets a turn. |
-| **Equal shares** | Every heading stays current for the same amount of scrolling. |
-| **No tracking** | Use the rail to navigate without highlighting a current heading. |
+| **Section length** · recommended | Longer sections stay current for more of your scrolling. Every heading gets a turn. |
+| **Heading position** | A heading becomes current when it reaches the top of the note area. |
+| **Equal scroll steps** | Every heading stays current for the same amount of scrolling. |
+| **Off** | Use the rail to navigate without highlighting a current heading. |
 
-With **By section length**, navigation places the heading 24px below the top of
+With **Section length**, navigation places the heading 24px below the top of
 the note area when space allows. That same landing position starts its tracking
 range, which continues to the next heading’s landing position. Ranges follow the
 rendered layout, including wrapped text and images. Near the bottom, where a
@@ -100,13 +132,13 @@ heading cannot reach the top, trailing ranges use the remaining scroll space.
 Short or empty sections borrow some scroll space from the preceding section,
 while keeping their headings visible. Their headings may therefore land lower. Very short notes may not have enough scroll space for distinct ranges.
 
-**Equal shares** keeps equal portions of the scroll range for each heading;
+**Equal scroll steps** keeps equal portions of the scroll range for each heading;
 navigation prefers showing the heading within its assigned portion.
 Opening a heading bookmark from Obsidian or following a heading link uses the
 same landing rule as clicking a mark.
-**Follow the note** and **No tracking** keep Obsidian’s exact heading jumps.
+**Heading position** and **Off** keep Obsidian’s exact heading jumps.
 
-Under **Behaviour → Heading navigation**, you can enable **Place cursor at heading**
+Under **Behaviour → Navigation**, you can enable **Place cursor at heading**
 for editing mode and **Briefly highlight heading** for a fading destination highlight
 in either mode. Both are off by default and are independent of presets.
 
@@ -133,11 +165,11 @@ Touch labels omit the quick bookmark button; using a mouse, trackpad, or keyboar
 restores it, including on iPad. Heading navigation uses precise pixel landings so
 closely spaced headings activate their own marks.
 
-**By section length** is the default for new installations. Existing saved choices
+**Section length** is the default for new installations. Existing saved choices
 are preserved. Nested headings each start their own range.
 
 **Finish on the last heading** highlights the final heading when you reach the
-bottom of a scrollable note. It works with any rule, including **No tracking**
+bottom of a scrollable note. It works with any rule, including **Off**
 if you only want a highlight at the very end.
 
 You can also highlight other headings that are on screen, fade sections you’ve
@@ -146,7 +178,7 @@ passed, or let the current bar fill as you move through its section.
 ## On your phone
 
 The rail is hidden on phones by default. To enable it, go to
-**Settings → Margin Rail → Placement → On phones** and choose **Landscape only**
+**Settings → Margin Rail → Placement → Visibility → On phones** and choose **Landscape only**
 or **Show on phones**. The settings preview is always available.
 
 ## If the rail doesn’t appear
@@ -163,8 +195,8 @@ what happened.
 
 Margin Rail works locally. It doesn’t send network requests or collect usage data.
 
-Desktop testing includes Obsidian **1.12.7** and **1.14.4**, and the plugin has
-also been tested on iPhone. Support back to **1.2.7** is based on checking that
+Desktop testing includes Obsidian **1.12.7**, **1.14.4**, and **1.14.5**. The plugin
+has also been tested on iPhone. Support back to **1.2.7** is based on checking that
 version’s code and APIs; it hasn’t been tested by hand on that version. Reports
 from older versions, Android devices, and tablets are welcome.
 
@@ -175,11 +207,21 @@ these features.
 <details>
 <summary>For developers</summary>
 
-Plain JavaScript and CSS; no build step. Run `node scripts/verify.cjs` for all
-checks. Optional browser layout and interaction checks use Playwright with an
-installed Chromium: `node tests/browser/navigation.cjs`. Set `PLAYWRIGHT_MODULE`
-to its module path if it is not installed locally. Touch regressions run in Chromium
-and WebKit with `node tests/browser/touch.cjs` (install both Playwright browsers).
+Source lives in `src/` as TypeScript. Obsidian loads the generated `main.js`
+bundle alongside `manifest.json` and `styles.css`.
+
+```sh
+npm ci
+npm run build    # strict typecheck and bundle
+npm run dev      # rebuild while editing
+npm test         # build and regression checks
+```
+
+Optional browser checks use Playwright with installed Chromium and WebKit:
+`node tests/browser/settings.cjs`, `node tests/browser/navigation.cjs`, and
+`node tests/browser/touch.cjs`. Set `PLAYWRIGHT_MODULE` to its module path if
+it is not installed locally.
+
 To release, commit on the branch tracking `origin/main`, then run
 `node scripts/release.cjs <next-version>`. GitHub Actions checks, attests, and
 publishes the plugin files.

@@ -5,7 +5,7 @@ const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '../..');
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH });
   try {
     const page = await browser.newPage({ viewport: { width: 800, height: 1000 } });
     const errors = [];
@@ -25,6 +25,8 @@ const root = path.resolve(__dirname, '../..');
       /* Obsidian's DropdownComponent applies a cached measured width. */
       .setting-item-control select.dropdown { width:var(--dropdown-fitted-width,inherit); }
       input[type=range] { accent-color:#a78be0; } h2 { font-size:22px; }
+      .checkbox-container { width:28px; height:18px; background:#555; border-radius:10px; }
+      .checkbox-container.is-enabled { background:#a78be0; }
     </style><div id="settings"></div>`);
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'styles.css'), 'utf8') });
     await page.evaluate(() => {
@@ -48,12 +50,25 @@ const root = path.resolve(__dirname, '../..');
         setCta() { return this; } setWarning() { return this; }
         onClick(fn) { this.el.addEventListener('click',fn);return this; }
       }
+      // Obsidian uses a focusable div for ToggleComponent, with no input.
+      class Toggle {
+        constructor(el) {
+          this.toggleEl=el;el.tabIndex=0;el.setAttribute('role','checkbox');
+          const toggle=()=>{this.setValue(!this.value);this.change?.(this.value);};
+          el.addEventListener('click',toggle);
+          el.addEventListener('keydown',event=>{
+            if(event.key===' '||event.key==='Enter'){event.preventDefault();toggle();}
+          });
+        }
+        setValue(value) {this.value=value;this.toggleEl.classList.toggle('is-enabled',value);this.toggleEl.setAttribute('aria-checked',String(value));return this;}
+        onChange(fn) {this.change=fn;return this;}
+      }
       class Setting {
         constructor(parent) { this.settingEl=parent.createDiv({cls:'setting-item'});this.info=this.settingEl.createDiv({cls:'setting-item-info'});this.name=this.info.createDiv({cls:'setting-item-name'});this.desc=this.info.createDiv({cls:'setting-item-description'});this.controlEl=this.settingEl.createDiv({cls:'setting-item-control'}); }
         setName(v) { this.name.textContent=v;return this; } setDesc(v) { this.desc.textContent=v;return this; }
         setHeading() { this.settingEl.addClass('setting-item-heading');return this; }
         addDropdown(fn) { fn(new Component(this.controlEl.createEl('select',{cls:'dropdown'})));return this; }
-        addToggle(fn) { fn(new Component(this.controlEl.createEl('input',{type:'checkbox'})));return this; }
+        addToggle(fn) { fn(new Toggle(this.controlEl.createDiv({cls:'checkbox-container'})));return this; }
         addText(fn) { fn(new Component(this.controlEl.createEl('input',{type:'text'})));return this; }
         addButton(fn) { fn(new Component(this.controlEl.createEl('button')));return this; }
         addColorPicker(fn) { fn(new Component(this.controlEl.createEl('input',{type:'color'})));return this; }
@@ -70,241 +85,149 @@ const root = path.resolve(__dirname, '../..');
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'main.js'), 'utf8') + '\nwindow.settingsAPI={ScrollspySettingTab,DEFAULTS,SESSION_DEFAULTS};' });
     await page.evaluate(() => {
       const {ScrollspySettingTab,DEFAULTS,SESSION_DEFAULTS}=settingsAPI;
-      window.plugin={settings:{...DEFAULTS,...SESSION_DEFAULTS,settingsSection:'hover',showAdvanced:true},applyStyles:module.exports.prototype.applyStyles,saveSettings(){},saveData(){}};
+      window.plugin={settings:{...DEFAULTS,...SESSION_DEFAULTS,settingsSection:'hover'},applyStyles:module.exports.prototype.applyStyles,saveSettings(){},saveData(){}};
       window.tab=new ScrollspySettingTab({},plugin);tab.display();
     });
-    const checkUpdateAlignment = async () => {
-      const alignment = await page.locator('.scrollspy-preset-update').evaluate(group => {
-        const update = group.firstElementChild, target = group.lastElementChild;
-        const textCenter = element => {
-          const range = document.createRange();
-          range.selectNodeContents(element.firstChild);
-          const box = range.getBoundingClientRect();
-          return box.top + box.height / 2;
-        };
-        return { delta: Math.abs(textCenter(update) - textCenter(target)),
-          heightDelta: Math.abs(update.getBoundingClientRect().height - target.getBoundingClientRect().height) };
-      });
-      assert.ok(alignment.delta < 1, `Update text alignment: ${JSON.stringify(alignment)}`);
-      assert.ok(alignment.heightDelta < 1, 'Split control halves have equal heights');
-    };
-    assert.equal(await page.locator('.scrollspy-preset-update').isVisible(),false);
-    assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Rail','Behaviour','Labels','Placement']);
-    assert.equal(await page.getByRole('tab', {name:'Behaviour',exact:true}).getAttribute('aria-selected'), 'true');
-    const hapticToggle=page.locator('.setting-item').filter({has:page.getByText('Haptic ticks while dragging',{exact:true})}).locator('input[type=checkbox]');
-    assert.equal(await hapticToggle.isChecked(),false,'Mac haptics default off');
-    await hapticToggle.check();
-    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
-    assert.equal(await page.evaluate(()=>plugin.settings.activePreset),'default','Device preference does not create an unsaved preset');
-    await page.evaluate(()=>{testPlatform.isMacOS=false;tab.display();});
-    assert.equal(await page.getByText('Haptic ticks while dragging',{exact:true}).count(),0,'Other platforms do not show Mac haptics');
-    await page.evaluate(()=>{testPlatform.isMacOS=true;tab.display();});
-    await page.locator('select[data-setting="hoverStyle"]').selectOption('pill');
-    assert.equal(await page.evaluate(() => document.activeElement.dataset.setting), 'hoverStyle');
-    assert.equal(await page.locator('.scrollspy-panel').getByText('Opened thickness',{exact:true}).count(),1);
+    assert.deepEqual(await page.getByRole('tab').allTextContents(),['Rail','Behaviour','Labels','Placement']);
+    assert.equal(await page.locator('input[type=range]').count(),0,'No default sliders');
+    assert.equal(await page.locator('.scrollspy-preset-chevron').evaluate(el=>{
+      const box=el.getBoundingClientRect();
+      return document.elementFromPoint(box.x+box.width/2,box.y+box.height/2)?.tagName==='SELECT';
+    }),true,'Preset chevron clicks reach the native select');
+    assert.equal(await page.locator('.scrollspy-settings-header select').evaluate(el=>{
+      const box=el.getBoundingClientRect();
+      return [2,box.width-2].every(x=>[2,box.height-2].every(y=>document.elementFromPoint(box.x+x,box.y+y)===el));
+    }),true,'Preset padding is part of the clickable select');
+    assert.deepEqual(await page.locator('select[data-setting="trackingMode"] option').allTextContents(),['Section length · Recommended','Heading position','Equal scroll steps','Off']);
+    const field = key => page.locator(`.setting-item[data-key="${key}"]`);
+    const number = async (key,value) => {const input=field(key).locator('input[type=number]');await input.fill(String(value));await input.press('Tab');};
+    const group = value => page.locator(`.scrollspy-settings-section[data-group="${value}"]`).scrollIntoViewIfNeeded();
+    await group('navigation');
+    const haptics=field('macDragHaptics').getByRole('checkbox');await haptics.check();
+    assert.equal(await page.evaluate(()=>plugin.settings.activePreset),'default','Device edits do not dirty presets');
+    // Real keyboard activation survives the redraw and reaches newly revealed controls.
+    await group('tracking');
+    await field('trackingMode').getByRole('combobox').focus();await page.keyboard.press('Tab');
+    const sectionFill=()=>field('showSectionProgress').getByRole('checkbox');
+    assert.equal(await sectionFill().evaluate(el=>el===document.activeElement),true);
+    await page.keyboard.press('Space');
+    assert.equal(await page.evaluate(()=>plugin.settings.showSectionProgress),true);
+    assert.equal(await sectionFill().evaluate(el=>el===document.activeElement),true,'Toggle redraw preserves keyboard focus');
+    await page.keyboard.press('Tab');
+    assert.equal(await field('progressDirection').getByRole('combobox').evaluate(el=>el===document.activeElement),true);
+    await page.keyboard.press('Shift+Tab');await page.keyboard.press('Space');
+    assert.equal(await page.evaluate(()=>plugin.settings.showSectionProgress),false);
+    assert.equal(await sectionFill().evaluate(el=>el===document.activeElement),true,'A second keyboard edit keeps focus');
+    await page.keyboard.press('Tab');
+    assert.equal(await field('activeMode').getByRole('combobox').evaluate(el=>el===document.activeElement),true);
     await page.getByRole('tab',{name:'Rail',exact:true}).click();
-    await page.getByRole('slider',{name:'Pointer nearby',exact:true}).fill('0.25');
-    assert.equal(await page.evaluate(() => plugin.settings.hoverOpacity),.25);
-    assert.equal(await page.getByRole('slider',{name:'Pointer nearby',exact:true}).getAttribute('aria-valuetext'),'25%');
-    await page.locator('.scrollspy-settings-header select').selectOption('builtin-absolutely');
-    assert.equal(await page.evaluate(() => plugin.settings.side),'left');
-    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true,'Preset changes preserve the haptics preference');
-    // Built-in starting points are updateable even without any saved presets.
-    for(const value of ['19','20','21','22'])await page.getByRole('slider',{name:'Length',exact:true}).fill(value);
+    await number('tickWidth',29);
+    assert.equal(await page.evaluate(()=>plugin.settings.tickWidth),29);
     assert.equal(await page.locator('.scrollspy-settings-header option[value=custom]').count(),1);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.length),0);
-    await page.getByRole('button',{name:'Update preset “Absolutely”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.length),1);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),22);
-    assert.equal(await page.locator('.scrollspy-settings-header option[value=custom]').count(),0);
-    await page.getByRole('slider',{name:'Length',exact:true}).fill('23');
-    await page.getByRole('button',{name:'Update preset “Absolutely”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.length),1);
-    // Keep the original test scenario independent.
-    await page.evaluate(()=>{plugin.settings.presets=[];plugin.settings.activePreset='builtin-absolutely';plugin.settings.sourcePresetId=null;tab.updateTargetId=null;tab.display();});
-
-    assert.equal(await page.getByRole('slider',{name:'Pointer nearby',exact:true}).inputValue(),'0.25');
-    await page.getByText('Save as…',{exact:true}).click();
-    await page.getByPlaceholder('Preset name').fill('Browser test');
-    await page.getByRole('button',{name:'Save',exact:true}).click();
-    assert.equal(await page.evaluate(() => plugin.settings.presets[0].name),'Browser test');
-    assert.equal(await page.locator('.scrollspy-preset-manager').getAttribute('open'),'');
-    // The source survives edits, tab changes, and reopening the settings tab.
-    await page.getByRole('slider',{name:'Length',exact:true}).fill('29');
-    assert.equal(await page.evaluate(() => plugin.settings.activePreset),'custom');
-    assert.equal(await page.locator('.scrollspy-update-target').textContent(),'Browser test');
-    assert.equal(await page.locator('.scrollspy-update-chevron').count(),0);
-    await page.evaluate(()=>{tab.hide();tab=new settingsAPI.ScrollspySettingTab({},plugin);tab.display();});
-    await page.getByRole('button',{name:'Update preset “Browser test”',exact:true}).click();
-    assert.equal(await page.evaluate(() => plugin.settings.presets[0].values.tickWidth),29);
-    // A second destination can be selected without loading over the edits.
-    await page.evaluate(()=>{plugin.settings.presets.push({id:'other',name:'Other',values:{...settingsAPI.DEFAULTS,tickWidth:12}});tab.display();});
-    await page.getByRole('slider',{name:'Length',exact:true}).fill('35');
-    await checkUpdateAlignment();
-    await page.getByRole('button',{name:'Choose preset to update; currently “Browser test”',exact:true}).click();
-    await page.getByRole('menuitem',{name:'Other',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.tickWidth),35);
-    await page.getByRole('button',{name:'Update preset “Other”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.find(p=>p.id==='other').values.tickWidth),35);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),29);
-    assert.equal(await page.evaluate(()=>plugin.settings.activePreset),'other');
-    await page.getByRole('tab',{name:'Labels',exact:true}).click();
-    await page.keyboard.press('ArrowRight');
-    assert.equal(await page.getByRole('tab',{name:'Placement',exact:true}).getAttribute('aria-selected'),'true');
-    // Same-name presets are never mistaken for copies of a built-in.
-    await page.evaluate(()=>{
-      plugin.settings.presets=[{id:'handmade',name:'Quiet',values:{...settingsAPI.DEFAULTS,tickWidth:55}}];
-      tab.updateTargetId=null;tab.display();
-    });
-    await page.locator('.scrollspy-settings-header select').selectOption('builtin-quiet');
-    await page.getByRole('tab',{name:'Rail',exact:true}).click();
-    await page.getByRole('slider',{name:'Length',exact:true}).fill('31');
-    await page.getByRole('button',{name:'Update preset “Quiet”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.find(p=>p.id==='handmade').values.tickWidth),55);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.find(p=>p.originBuiltinId==='builtin-quiet').values.tickWidth),31);
-    // Re-select the built-in and reopen the tab: its copy is found by origin ID.
-    await page.locator('.scrollspy-settings-header select').selectOption('builtin-quiet');
-    await page.evaluate(()=>{tab.hide();tab=new settingsAPI.ScrollspySettingTab({},plugin);tab.display();});
-    await page.getByRole('slider',{name:'Length',exact:true}).fill('32');
-    await page.getByRole('button',{name:'Update preset “Quiet”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.length),2);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets.find(p=>p.originBuiltinId==='builtin-quiet').values.tickWidth),32);
-    // An unknown legacy source requires a choice, even with just one preset.
-    await page.evaluate(()=>{
-      plugin.settings.presets=plugin.settings.presets.filter(p=>p.id==='handmade');
-      plugin.settings.activePreset='custom';plugin.settings.sourcePresetId=null;
-      tab.hide();tab=new settingsAPI.ScrollspySettingTab({},plugin);tab.display();
-    });
-    assert.equal(await page.getByRole('button',{name:'Update preset',exact:true}).isDisabled(),true);
-    await page.getByRole('button',{name:'Choose preset to update',exact:true}).click();
-    await page.getByRole('menuitem',{name:'Quiet',exact:true}).click();
-    await page.getByRole('button',{name:'Update preset “Quiet”',exact:true}).click();
-    assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),32);
-    // Deleting the source must not silently select the next saved preset.
-    await page.evaluate(()=>{
-      plugin.settings.presets.push({id:'survivor',name:'Survivor',values:{...settingsAPI.DEFAULTS,tickWidth:44}});
-      tab.display();document.querySelector('.scrollspy-preset-manager').open=true;
-    });
+    // Saving remains available in the one header menu.
     await page.getByRole('button',{name:'Preset options',exact:true}).click();
-    await page.getByRole('menuitem',{name:'Delete “Quiet”',exact:true}).click();
-    assert.equal(await page.getByRole('button',{name:'Update preset',exact:true}).isDisabled(),true);
-    assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),44);
-    await page.getByPlaceholder('Preset name').fill('bb');
-    await page.getByRole('button',{name:'Save',exact:true}).click();
-    // A stale Obsidian measurement must not clip even a two-letter name.
-    await page.locator('.scrollspy-settings-header select').evaluate(select=>select.style.setProperty('--dropdown-fitted-width','28px'));
-    assert.ok(await page.locator('.scrollspy-settings-header select').evaluate(select=>{
-      const context=document.createElement('canvas').getContext('2d');
-      context.font=getComputedStyle(select).font;
-      return select.getBoundingClientRect().width>=context.measureText('bb').width+36;
-    }), 'bb remains visible despite a stale fitted dropdown width');
-    assert.equal(await page.locator('.scrollspy-preset-update').isVisible(),false);
-    // A name that fits the pane must not be truncated by a fixed control cap.
-    await page.getByPlaceholder('Preset name').fill('My carefully tuned reading configuration');
-    await page.getByRole('button',{name:'Save',exact:true}).click();
-    assert.equal(await page.locator('.scrollspy-preset-update').isVisible(),false);
-    const pickerFits = await page.locator('.scrollspy-settings-header select').evaluate(select=>{
-      const canvas=document.createElement('canvas'), context=canvas.getContext('2d');
-      context.font=getComputedStyle(select).font;
-      return context.measureText(select.selectedOptions[0].text).width+36<=select.getBoundingClientRect().width;
+    await page.getByRole('menuitem',{name:'Save preset as…',exact:true}).click();
+    await page.getByPlaceholder('Preset name').fill('Browser test');await page.getByRole('button',{name:'Save',exact:true}).click();
+    await number('tickWidth',31);
+    await page.getByRole('button',{name:'Update preset “Browser test”',exact:true}).click();
+    assert.equal(await page.evaluate(()=>plugin.settings.presets[0].values.tickWidth),31);
+    // Full presets leave device preferences alone.
+    await page.locator('.scrollspy-settings-header select').selectOption('builtin-absolutely');
+    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
+    assert.equal(await page.locator('select[data-setting=activePreset]').evaluate(el=>el===document.activeElement),true,'Preset changes preserve focus');
+    await page.getByRole('button',{name:'Dot',exact:true}).click();
+    assert.equal(await page.getByRole('button',{name:'Dot',exact:true}).evaluate(el=>el===document.activeElement),true,'Shape changes preserve focus');
+    assert.equal(await page.evaluate(()=>plugin.settings.tickWidth),6);
+    await group('states');
+    await page.locator('[data-group=states] select').first().selectOption('hover');
+    assert.equal(await page.locator('select[data-setting=settingsState]').evaluate(el=>el===document.activeElement),true,'Editing-state changes preserve focus');
+    await number('pointedOpacity',65);
+    assert.equal(await page.evaluate(()=>plugin.settings.pointedOpacity),.65);
+    await page.locator('[data-group=states] select').first().selectOption('idle');
+    assert.equal(await field('idleColorMode').locator('option[value=inherit]').count(),0,'Idle has no transparent inherit choice');
+    // Previously saved presets remain usable and display a valid base colour.
+    await page.evaluate(()=>{
+      plugin.settings.presets.push({id:'legacy-idle',name:'Legacy idle',values:{idleColorMode:'inherit'}});
+      tab.display();
     });
-    assert.equal(pickerFits,true,'Selected preset can use the available header width');
-    await page.getByPlaceholder('Preset name').fill('A very long custom preset name '.repeat(3));
-    await page.getByRole('button',{name:'Save',exact:true}).click();
-    // Keep management expanded while checking long names on small screens.
+    await page.locator('.scrollspy-settings-header select').selectOption('legacy-idle');
+    assert.equal(await page.evaluate(()=>plugin.settings.idleColorMode),'text');
+    assert.equal(await field('idleColorMode').getByRole('combobox').inputValue(),'text');
+    assert.equal(await page.locator('.scrollspy-stage .scrollspy-mark').last().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(221, 221, 221)');
+    // Native scrolling moves the note; the preview rail uses the same geometry.
+    const note=page.locator('.scrollspy-preview-note');
+    await note.evaluate(el=>el.scrollTop=0);
+    await page.waitForFunction(()=>document.querySelector('.scrollspy-preview-progress').textContent==='0%');
+    await note.hover();await page.mouse.wheel(0,200);
+    await page.waitForFunction(()=>document.querySelector('.scrollspy-preview-note').scrollTop>100);
+    // Inspect every group at desktop and phone widths, checking a stable control edge.
     for(const width of [800,390]) {
       await page.setViewportSize({width,height:1000});
-      for(const name of ['Rail','Behaviour','Labels','Placement']) {
-        await page.getByRole('tab',{name,exact:true}).click();
-        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth>innerWidth),false,`${name} overflow at ${width}`);
+      for(const tab of ['Rail','Behaviour','Labels','Placement']) {
+        await page.getByRole('tab',{name:tab,exact:true}).click();
+        assert.equal(await page.locator('#scrollspy-group').count(),0,'Sections are visible without a group picker');
+        const sections=page.locator('.scrollspy-settings-section');
+        assert.ok(await sections.count()>=2);
+        for(let index=0;index<await sections.count();index++) {
+          const section=sections.nth(index);
+          await section.scrollIntoViewIfNeeded();
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${tab} at ${width}`);
+          assert.ok(await section.locator('.setting-item').count()>0);
+          assert.equal(await section.getByRole('heading').count(),1);
+          if(index>0) {
+            const full=await page.locator('.scrollspy-workbench-body').boundingBox();
+            const box=await section.boundingBox();
+            assert.ok(Math.abs(box.x-full.x)<1 && Math.abs(box.width-full.width)<1,'Sections below the preview use the full width');
+          }
+        }
       }
     }
+    // CSS uses the same effective settings for geometry and hit testing.
     await page.setViewportSize({width:800,height:1000});
+    await page.addStyleTag({content:'body { --margin-rail-mark-width: 24px; }'});
     await page.getByRole('tab',{name:'Rail',exact:true}).click();
-    const captured = await page.evaluate(() => JSON.stringify(tab.capture()));
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.evaluate(() => JSON.stringify(tab.capture())),captured,'Mode changes preserve every preset value');
-    assert.equal(await page.locator('select[data-setting="markLength"]').inputValue(),'custom');
-    await page.locator('select[data-setting="markLength"]').selectOption('extended');
-    assert.equal(await page.evaluate(() => plugin.settings.tickWidth),18);
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    await page.getByRole('spinbutton',{name:'Length value',exact:true}).fill('19');
-    await page.getByRole('spinbutton',{name:'Length value',exact:true}).press('Tab');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="markLength"]').inputValue(),'custom');
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    await page.getByRole('spinbutton',{name:'Length value',exact:true}).fill('18');
-    await page.getByRole('spinbutton',{name:'Length value',exact:true}).press('Tab');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="markLength"]').inputValue(),'extended','Matching numeric values restore the named choice');
-    // Group choices match only when every underlying value matches.
-    await page.locator('select[data-setting="markShape"]').selectOption('rounded');
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    await page.getByRole('slider',{name:'Corner radius',exact:true}).fill('1.5');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="markShape"]').inputValue(),'custom');
-    await page.locator('select[data-setting="markAlignment"]').selectOption('center');
-    assert.equal(await page.locator('.scrollspy-stage .scrollspy-rail').getAttribute('data-mark-alignment'),'center');
-    await page.getByRole('tab',{name:'Behaviour',exact:true}).click();
-    await page.locator('select[data-setting="hoverResponse"]').selectOption('focus');
-    assert.equal(await page.locator('.scrollspy-stage .scrollspy-rail').evaluate(el=>el.classList.contains('hover-focus')),true);
-    await page.locator('select[data-setting="hoverResponse"]').selectOption('dot');
-    assert.equal(await page.evaluate(()=>plugin.settings.expandHeight),10);
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="hoverStyle"]').inputValue(),'dot');
-    await page.getByRole('spinbutton',{name:'Dot diameter value',exact:true}).fill('14');
-    await page.getByRole('spinbutton',{name:'Dot diameter value',exact:true}).press('Tab');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="hoverResponse"]').inputValue(),'custom');
-    await page.locator('select[data-setting="hoverResponse"]').selectOption('dot');
-    const progressRow=page.locator('.setting-item').filter({has:page.getByText('Show progress within the section',{exact:true})});
-    await progressRow.getByRole('checkbox').check();
-    await page.locator('select[data-setting="progressDirection"]').selectOption('right');
-    assert.equal(await page.locator('.scrollspy-stage .scrollspy-rail').getAttribute('data-progress-direction'),'right');
-    await page.locator('select[data-setting="progressDirection"]').selectOption('center');
-    await page.getByRole('tab',{name:'Labels',exact:true}).click();
-    const markDuration=await page.evaluate(()=>plugin.settings.animDuration);
-    await page.locator('select[data-setting="labelMotion"]').selectOption('none');
-    assert.equal(await page.locator('select[data-setting="labelSpeed"]').count(),0);
-    await page.locator('select[data-setting="labelMotion"]').selectOption('slide');
-    await page.locator('select[data-setting="labelSpeed"]').selectOption('relaxed');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelDuration),400);
-    assert.equal(await page.evaluate(()=>plugin.settings.animDuration),markDuration,'Label speed is independent of mark speed');
-    assert.equal(await page.locator('.scrollspy-stage .scrollspy-flyout').getAttribute('data-label-motion'),'slide');
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    await page.getByRole('spinbutton',{name:'Show and hide duration value',exact:true}).fill('340');
-    await page.getByRole('spinbutton',{name:'Show and hide duration value',exact:true}).press('Tab');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="labelSpeed"]').inputValue(),'custom');
-    await page.locator('select[data-setting="labelMoveMotion"]').selectOption('slide');
-    await page.locator('select[data-setting="labelMoveSpeed"]').selectOption('smooth');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMoveDuration),220);
-    assert.equal(await page.evaluate(()=>plugin.settings.labelDuration),340,'Between-marks speed preserves show/hide speed');
-    assert.deepEqual(await page.locator('select[data-setting="labelMoveMotion"] option').allTextContents(),['None','Slide']);
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMotion),'slide','Between-marks effect preserves show/hide effect');
-    await page.getByRole('button',{name:'Advanced',exact:true}).click();
-    await page.getByRole('spinbutton',{name:'Between marks duration value',exact:true}).fill('180');
-    await page.getByRole('spinbutton',{name:'Between marks duration value',exact:true}).press('Tab');
-    await page.getByRole('button',{name:'Normal',exact:true}).click();
-    assert.equal(await page.locator('select[data-setting="labelMoveSpeed"]').inputValue(),'custom');
-    await page.locator('.scrollspy-settings-header select').selectOption('builtin-progress');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMotion),'none');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMoveMotion),'none');
-    await page.locator('.scrollspy-settings-header select').selectOption('builtin-absolutely');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMotion),'slide');
-    assert.equal(await page.evaluate(()=>plugin.settings.labelMoveMotion),'slide');
+    await group('shape');
+    assert.equal(await field('tickWidth').getByRole('spinbutton').isDisabled(),true);
+    assert.equal(await page.evaluate(()=>tab.preview.settings.tickWidth),24);
+    // Export/import uses validated preset data and keeps device settings out.
+    await page.getByRole('button',{name:'Preset options',exact:true}).click();
+    await page.getByRole('menuitem',{name:'CSS snippets and preset JSON…',exact:true}).click();
+    await group('json');
+    const json=page.getByRole('textbox',{name:'Preset JSON',exact:true});
+    const exported=JSON.parse(await json.inputValue());
+    assert.equal('macDragHaptics' in exported.values,false);assert.equal('phoneVisibility' in exported.values,false);
+    await json.fill(JSON.stringify({...exported,values:{...exported.values,tickWidth:900}}));
+    await page.getByRole('button',{name:'Load as preset',exact:true}).click();
+    assert.match(await page.getByRole('alert').innerText(),/Out of range/);
+    await json.fill(JSON.stringify({...exported,name:'Imported'}));
+    await page.getByRole('button',{name:'Load as preset',exact:true}).click();
+    assert.equal(await page.evaluate(()=>plugin.settings.presets.at(-1).name),'Imported');
+    assert.equal(await page.evaluate(()=>plugin.settings.macDragHaptics),true);
+    // Placeholder content stays out of the rail's expanded lane on either side.
     for (const width of [800,390]) {
       await page.setViewportSize({width,height:1000});
-      for (const name of ['Rail','Behaviour','Labels','Placement']) {
-        await page.getByRole('tab',{name,exact:true}).click();
-        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth>innerWidth),false,`Normal ${name} overflow at ${width}`);
+      for (const side of ['left','right']) {
+        await page.evaluate(side=>{
+          Object.assign(plugin.settings,settingsAPI.DEFAULTS,{side,settingsSection:'appearance'});
+          tab.filesOpen=false;tab.display();
+        },side);
+        assert.equal(await page.locator('.scrollspy-preview-note p').count(),0);
+        assert.ok(await page.locator('.scrollspy-sample-line').count()>0);
+        const mark=page.locator('.scrollspy-stage .scrollspy-mark').first();
+        const box=await mark.boundingBox();
+        await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.waitForTimeout(250);
+        const clear=await page.evaluate(side=>{
+          const mark=document.querySelector('.scrollspy-stage .scrollspy-mark').getBoundingClientRect();
+          return [...document.querySelectorAll('.scrollspy-sample-line')].every(line=>{
+            const box=line.getBoundingClientRect();
+            return side==='left'?box.left>=mark.right+8:box.right<=mark.left-8;
+          });
+        },side);
+        assert.equal(clear,true,`Placeholder and expanded rail stay separate: ${side}, ${width}`);
+        if(width===800) assert.equal(await page.locator('.scrollspy-stage').evaluate(el=>el.clientHeight),300);
       }
     }
-    await page.setViewportSize({width:800,height:1000});
-    await page.getByRole('tab',{name:'Rail',exact:true}).click();
-    if(process.env.SETTINGS_SCREENSHOT)await page.screenshot({path:process.env.SETTINGS_SCREENSHOT,fullPage:true});
-    assert.deepEqual(errors,[]);
-    await page.evaluate(()=>tab.hide());
-    console.log('Settings browser checks passed: one unsaved option, explicit update destinations, built-in origin IDs, same-name safety, deleted/legacy sources, keyboard focus, long-name narrow layout.');
+    assert.deepEqual(errors,[]);await page.evaluate(()=>tab.hide());
+    console.log('Workbench checks passed: visible sections, exact controls, presets, isolated device preferences, native scrolling, CSS geometry, validated JSON, and phone/desktop layouts.');
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

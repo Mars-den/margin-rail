@@ -5,7 +5,7 @@ const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '../..');
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH });
   try {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, hasTouch: true });
     await page.setContent(`<style>
@@ -47,7 +47,7 @@ const root = path.resolve(__dirname, '../..');
         async bookmarkHeading(index) { window.bookmarkedIndex = index; }
       }
       window.rail = new TestRail({ settings, applyStyles: module.exports.prototype.applyStyles }, document.querySelector('#host'));
-      rail.render(Array.from({ length: 200 }, (_, i) => i % 6 + 1));
+      rail.updateSettings(); rail.render(Array.from({ length: 200 }, (_, i) => i % 6 + 1));
     });
     assert.equal(await page.getByRole('listbox', { name: 'Note headings', exact: true }).count(), 1);
     assert.equal(await page.locator('[role="listbox"]').getAttribute('aria-label'), null,
@@ -60,13 +60,13 @@ const root = path.resolve(__dirname, '../..');
     });
     for (const anchor of ['top', 'middle', 'bottom']) {
       for (const offset of [-180, 0, 180]) {
-        await page.evaluate(({anchor, offset}) => { rail.settings.anchor = anchor; rail.settings.axisOffset = offset; rail.updateSettings(); }, {anchor, offset});
+        await page.evaluate(({anchor, offset}) => { rail.plugin.settings.anchor = anchor; rail.plugin.settings.axisOffset = offset; rail.updateSettings(); }, {anchor, offset});
         const box = await layout();
         assert.ok(box.dense && box.scrollHeight > box.height && box.target >= 24);
         assert.ok(box.top >= box.hostTop && box.bottom <= box.hostBottom, JSON.stringify({anchor, offset, ...box}));
       }
     }
-    await page.evaluate(() => { rail.settings.anchor = 'middle'; rail.settings.axisOffset = 0; rail.updateSettings(); });
+    await page.evaluate(() => { rail.plugin.settings.anchor = 'middle'; rail.plugin.settings.axisOffset = 0; rail.updateSettings(); });
     await page.locator('#before').focus();
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement === rail.el), true);
@@ -112,7 +112,7 @@ const root = path.resolve(__dirname, '../..');
     assert.ok(await page.evaluate(() => scrubbed > .98));
 
     // Nested headings stay folded at rest and are all keyboard reachable.
-    await page.evaluate(() => { rail.settings.hierarchyMode = 'nearby'; rail.settings.idleLevels = 2; rail.settings.showLabels = false; rail.render([1, 2, 3, 4, 5, 6]); });
+    await page.evaluate(() => { rail.plugin.settings.hierarchyMode = 'nearby'; rail.plugin.settings.idleLevels = 2; rail.plugin.settings.showLabels = false; rail.updateSettings(); rail.render([1, 2, 3, 4, 5, 6]); });
     assert.equal(await page.evaluate(() => rail.el.children[5].hidden), true);
     await page.locator('#before').focus(); await page.keyboard.press('Tab'); await page.keyboard.press('End');
     assert.equal(await page.evaluate(() => rail.keyboardIndex === 5 && !rail.el.children[5].hidden), true);
@@ -120,8 +120,8 @@ const root = path.resolve(__dirname, '../..');
     await page.keyboard.press('Escape'); assert.equal(await page.evaluate(() => rail.el.children[5].hidden), true);
     // A long folded outline can scroll to its final branch and reveal its children.
     await page.evaluate(() => {
-      rail.host.style.height = '180px'; rail.settings.showLabels = true;
-      rail.render(Array.from({length: 200}, (_, i) => i % 10 === 0 ? 1 : 3));
+      rail.host.style.height = '180px'; rail.plugin.settings.showLabels = true;
+      rail.updateSettings(); rail.render(Array.from({length: 200}, (_, i) => i % 10 === 0 ? 1 : 3));
       rail.el.scrollTop = rail.el.scrollHeight;
     });
     const rootHeading = await page.locator('[role="option"]').nth(190).boundingBox();
@@ -133,11 +133,11 @@ const root = path.resolve(__dirname, '../..');
     await page.evaluate(() => rail.measure());
     assert.equal(await page.evaluate(() => rail.nearestIndex(rail.el.getBoundingClientRect().bottom - 12)), 199);
     for (const height of [180, 500]) {
-      await page.evaluate(height => { rail.host.style.height = `${height}px`; rail.render(Array(200).fill(1)); rail.fitPane(); }, height);
+      await page.evaluate(height => { rail.host.style.height = `${height}px`; rail.updateSettings(); rail.render(Array(200).fill(1)); rail.fitPane(); }, height);
       const box = await layout(); assert.ok(box.top >= box.hostTop && box.bottom <= box.hostBottom);
     }
     // Color-mix rule and legacy fallback are separate declarations.
-    await page.evaluate(() => { rail.settings.showSectionProgress = true; rail.updateSettings(); rail.activeIndex = 0; rail.paintProgress(.5); });
+    await page.evaluate(() => { rail.plugin.settings.showSectionProgress = true; rail.updateSettings(); rail.activeIndex = 0; rail.paintProgress(.5); });
     await page.waitForTimeout(160);
     assert.match(await page.evaluate(() => getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor), /color\(srgb/);
     await page.evaluate(() => {
@@ -149,7 +149,7 @@ const root = path.resolve(__dirname, '../..');
     });
     await page.waitForTimeout(160);
     assert.equal(await page.evaluate(() => getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor), 'rgb(50, 60, 70)');
-    await page.evaluate(() => { rail.settings.showBookmarkButton = true; });
+    await page.evaluate(() => { rail.plugin.settings.showBookmarkButton = true; rail.updateSettings(); });
     await page.locator('#before').focus(); await page.keyboard.press('Tab');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Tab');
@@ -177,8 +177,8 @@ const root = path.resolve(__dirname, '../..');
     // resolve each branch from the resting placement, without cumulative drift.
     const placements = await page.evaluate(() => {
       rail.dismissKeyboard(); rail.host.style.height = '360px';
-      Object.assign(rail.settings, { hierarchyMode: 'nearby', idleLevels: 2, anchor: 'middle', axisOffset: 0 });
-      rail.render([1,2,3,3,2,3,3,2,3,1,2]);
+      Object.assign(rail.plugin.settings, { hierarchyMode: 'nearby', idleLevels: 2, anchor: 'middle', axisOffset: 0 });
+      rail.updateSettings(); rail.render([1,2,3,3,2,3,3,2,3,1,2]);
       const result = [];
       for (let cycle = 0; cycle < 4; cycle++) {
         for (const index of [0,1,4,7,9,10]) {
@@ -198,14 +198,14 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(placements.shiftAfterLeave, '');
     // Unequal marks align independently of the rail's attachment side.
     await page.evaluate(() => {
-      Object.assign(rail.settings, { hierarchyMode: 'all', tickWidth: 36, tickHeight: 4,
+      Object.assign(rail.plugin.settings, { hierarchyMode: 'all', tickWidth: 36, tickHeight: 4,
         levelIndent: 8, hoverStyle: 'none', activeBoost: 0, showSectionProgress: true });
-      rail.activeIndex = 0; rail.render([1,2,3]); rail.paintActive(new Set([0]), 0); rail.paintProgress(0.25);
+      rail.activeIndex = 0; rail.updateSettings(); rail.render([1,2,3]); rail.paintActive(new Set([0]), 0); rail.paintProgress(0.25);
     });
     for (const side of ['left','right']) {
       for (const alignment of ['left','center','right']) {
         const coordinates=await page.evaluate(({side,alignment})=>{
-          Object.assign(rail.settings,{side,markAlignment:alignment});rail.updatePresentation();
+          Object.assign(rail.plugin.settings,{side,markAlignment:alignment});rail.plugin.applyStyles(rail);rail.updatePresentation();
           return [...rail.el.querySelectorAll('.scrollspy-mark')].map(mark=>{
             const box=mark.getBoundingClientRect();
             return alignment==='center'?(box.left+box.right)/2:box[alignment];
@@ -216,7 +216,7 @@ const root = path.resolve(__dirname, '../..');
     }
     for (const direction of ['left','right','center']) {
       const fill=await page.evaluate(direction=>{
-        rail.settings.progressDirection=direction;rail.updatePresentation();
+        rail.plugin.settings.progressDirection=direction;rail.plugin.applyStyles(rail);rail.updatePresentation();
         const mark=rail.el.querySelector('.is-current .scrollspy-mark');
         const css=getComputedStyle(mark,'::before');
         return {width:parseFloat(css.width),markWidth:mark.getBoundingClientRect().width,left:css.left,right:css.right,transform:css.transform};
@@ -229,8 +229,37 @@ const root = path.resolve(__dirname, '../..');
         assert.notEqual(fill.transform,'none');
       }
     }
+    // Actual :hover must respect configured visibility on idle and current marks.
+    // A CSS probe verifies real hover matching. Chromium's headless DOM
+    // selector APIs do not reliably expose the live :hover state.
+    await page.addStyleTag({content:'.scrollspy-rail:hover { --test-pointer-hover: 1; }'});
     await page.evaluate(()=>{
-      Object.assign(rail.settings,{hoverStyle:'focus',animDuration:0});rail.updateSettings();
+      Object.assign(rail.plugin.settings,{hoverStyle:'none',pointedOpacity:.2,focusOpacity:.35,
+        idleColorMode:'inherit',markPassed:false,showSectionProgress:false});
+      rail.updateSettings();rail.paintActive(new Set([0]),0);
+    });
+    assert.equal(await page.locator('.scrollspy-mark').last().evaluate(mark=>getComputedStyle(mark).backgroundColor),'rgb(221, 221, 221)',
+      'Legacy idle inherit resolves to the base text colour instead of a transparent tick');
+    for(const index of [0,1]) {
+      const markBox=await page.locator('[role=option]').nth(index).boundingBox();
+      await page.mouse.move(markBox.x+markBox.width/2,markBox.y+markBox.height/2);
+      await page.waitForFunction(index=>rail.hoveredIndex===index,index);
+      assert.equal(await page.locator('.scrollspy-rail').evaluate(el=>getComputedStyle(el).getPropertyValue('--test-pointer-hover').trim()),'1');
+      await page.waitForFunction(()=>Number(getComputedStyle(rail.el.querySelector('.is-hover .scrollspy-mark')).opacity)===.2);
+    }
+    await page.locator('#before').focus();await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(()=>document.activeElement===rail.el&&rail.keyboardFocused&&getComputedStyle(rail.el).getPropertyValue('--test-pointer-hover').trim()==='1'),true);
+    await page.waitForFunction(()=>Number(getComputedStyle(rail.el.querySelector('[aria-selected=true] .scrollspy-mark')).opacity)===.35);
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(()=>Number(getComputedStyle(rail.el.querySelector('[aria-selected=true] .scrollspy-mark')).opacity)===.35);
+    await page.locator('#after').focus();await page.mouse.move(0,0);
+    await page.evaluate(()=>{
+      rail.onLeave();
+      Object.assign(rail.plugin.settings,{pointedOpacity:1,focusOpacity:1,idleColorMode:'text',markPassed:true,showSectionProgress:true});
+      rail.updateSettings();
+    });
+    await page.evaluate(()=>{
+      Object.assign(rail.plugin.settings,{hoverStyle:'focus',animDuration:0});rail.updateSettings();
       rail.paintActive(new Set([0]),0);rail.setHovered(1);
     });
     await page.waitForTimeout(150);
@@ -244,7 +273,7 @@ const root = path.resolve(__dirname, '../..');
     await page.evaluate(()=>rail.onLeave());
     assert.equal(await page.locator('.scrollspy-rail').evaluate(el=>el.classList.contains('is-pointing')),false);
     await page.evaluate(()=>{
-      Object.assign(rail.settings,{hoverStyle:'dot',expandHeight:14});rail.updateSettings();
+      Object.assign(rail.plugin.settings,{hoverStyle:'dot',expandHeight:14});rail.updateSettings();
       rail.keyboardFocused=true;rail.selectKeyboard(1);
     });
     const dot=await page.locator('.is-hover .scrollspy-mark').evaluate(mark=>{
@@ -256,19 +285,19 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.locator('.scrollspy-rail').evaluate(el=>el.classList.contains('is-pointing')),false);
     assert.equal(await page.locator('.is-hover').count(),0,'Dismissal restores resting marks');
     await page.evaluate(()=>{
-      rail.settings.hoverStyle='none';rail.updateSettings();
+      rail.plugin.settings.hoverStyle='none';rail.updateSettings();
     });
     assert.equal(await page.locator('.hover-focus,.hover-dot').count(),0,'Switching styles clears effect classes');
     // Label motion has independent timing and remains immediately focusable.
     for(const side of ['left','right']) {
       const hidden=await page.evaluate(side=>{
-        Object.assign(rail.settings,{side,labelMotion:'slide',labelDuration:0,showBookmarkButton:true});rail.updateSettings();rail.hideFlyout();
+        Object.assign(rail.plugin.settings,{side,labelMotion:'slide',labelDuration:0,showBookmarkButton:true});rail.updateSettings();rail.hideFlyout();
         return getComputedStyle(rail.flyout).transform;
       },side);
       assert.match(hidden,new RegExp(`, ${side==='left'?'-6':'6'},`),'Hidden slide starts toward the rail');
     }
     const opening=await page.evaluate(()=>{
-      rail.settings.labelDuration=400;rail.plugin.applyStyles(rail);rail.showFlyout(1);
+      rail.plugin.settings.labelDuration=400;rail.plugin.applyStyles(rail);rail.showFlyout(1);
       rail.flyoutBookmark.focus();
       const css=getComputedStyle(rail.flyout);
       return {visibility:css.visibility,duration:css.transitionDuration,properties:css.transitionProperty,focused:document.activeElement===rail.flyoutBookmark};
@@ -280,15 +309,15 @@ const root = path.resolve(__dirname, '../..');
     assert.match(restingTransform,/, 0,/,'Open label has no horizontal offset');
     await page.evaluate(()=>rail.hideFlyout());
     await page.waitForFunction(()=>getComputedStyle(rail.flyout).visibility==='hidden');
-    await page.evaluate(()=>{rail.settings.labelMotion='none';rail.updateSettings();rail.showFlyout(1);});
+    await page.evaluate(()=>{rail.plugin.settings.labelMotion='none';rail.updateSettings();rail.showFlyout(1);});
     assert.equal(await page.evaluate(()=>getComputedStyle(rail.flyout).transitionDuration),'0s');
     await page.emulateMedia({reducedMotion:'reduce'});
-    await page.evaluate(()=>{rail.settings.labelMotion='slide';rail.updateSettings();rail.showFlyout(1);});
+    await page.evaluate(()=>{rail.plugin.settings.labelMotion='slide';rail.updateSettings();rail.showFlyout(1);});
     assert.equal(await page.evaluate(()=>getComputedStyle(rail.flyout).transitionDuration),'0s');
     assert.match(await page.evaluate(()=>getComputedStyle(rail.flyout).transform),/, 0,/,'Reduced motion disables horizontal slide');
     await page.emulateMedia({reducedMotion:'no-preference'});
     await page.evaluate(()=>{
-      Object.assign(rail.settings,{labelMotion:'none',labelMoveMotion:'slide',labelMoveDuration:400});
+      Object.assign(rail.plugin.settings,{labelMotion:'none',labelMoveMotion:'slide',labelMoveDuration:400});
       rail.updateSettings();rail.showFlyout(0);
       rail.flyout.getBoundingClientRect();rail.showFlyout(2);
     });
@@ -312,11 +341,11 @@ const root = path.resolve(__dirname, '../..');
     await page.evaluate(()=>rail.hideFlyout());
     assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0);
     await page.evaluate(()=>{
-      rail.settings.labelMoveMotion='none';rail.showFlyout(0);rail.showFlyout(2);
+      rail.plugin.settings.labelMoveMotion='none';rail.plugin.applyStyles(rail);rail.showFlyout(0);rail.showFlyout(2);
     });
     assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0,'None switches between marks instantly');
     await page.emulateMedia({reducedMotion:'reduce'});
-    await page.evaluate(()=>{rail.settings.labelMoveMotion='slide';rail.hideFlyout();rail.showFlyout(0);rail.showFlyout(1);});
+    await page.evaluate(()=>{rail.plugin.settings.labelMoveMotion='slide';rail.plugin.applyStyles(rail);rail.hideFlyout();rail.showFlyout(0);rail.showFlyout(1);});
     assert.equal(await page.evaluate(()=>rail.labelAnimations.length),0,'Reduced motion disables between-mark effects');
     await page.emulateMedia({reducedMotion:'no-preference'});
     if (process.env.RAIL_SCREENSHOT) {
@@ -328,8 +357,8 @@ const root = path.resolve(__dirname, '../..');
     const touchSession = await page.context().newCDPSession(page);
     await page.evaluate(() => {
       rail.dismissKeyboard();
-      Object.assign(rail.settings, { hierarchyMode: 'nearby', idleLevels: 2, dragToScrub: true });
-      rail.render([1,2,3,3,2,3,3,2,3,1,2]);
+      Object.assign(rail.plugin.settings, { hierarchyMode: 'nearby', idleLevels: 2, dragToScrub: true });
+      rail.updateSettings(); rail.render([1,2,3,3,2,3,3,2,3,1,2]);
       window.touchActivations = [];
       rail.activate = index => touchActivations.push(index);
       window.mobilePulls = 0;
@@ -345,7 +374,7 @@ const root = path.resolve(__dirname, '../..');
       return { x: box.left + box.width / 2, y: rail.centers[index], index };
     });
     for (const scrub of [true, false]) {
-      await page.evaluate(scrub => { rail.settings.dragToScrub = scrub; rail.updateSettings(); }, scrub);
+      await page.evaluate(scrub => { rail.plugin.settings.dragToScrub = scrub; rail.updateSettings(); }, scrub);
       for (let repeat = 0; repeat < 3; repeat++) {
         const point = await touchPoint();
         const before = await page.evaluate(() => touchActivations.length);
@@ -355,7 +384,7 @@ const root = path.resolve(__dirname, '../..');
           'Touch taps choose the original visible mark once, without hover unfolding or a duplicate click');
       }
     }
-    await page.evaluate(() => { rail.settings.showBookmarkButton = true; rail.settings.dragToScrub = true; rail.updateSettings(); });
+    await page.evaluate(() => { rail.plugin.settings.showBookmarkButton = true; rail.plugin.settings.dragToScrub = true; rail.updateSettings(); });
     const actionPoint = await touchPoint();
     await touchSession.send('Input.dispatchTouchEvent', {type:'touchStart', touchPoints:[{x:actionPoint.x,y:actionPoint.y}]});
     await page.evaluate(() => rail.showFlyout(rail.drag.index));
@@ -378,7 +407,7 @@ const root = path.resolve(__dirname, '../..');
     assert.equal(await page.evaluate(() => window.bookmarkedIndex), await page.evaluate(() => rail.keyboardIndex));
     await page.evaluate(() => { rail.dismissKeyboard(); rail.onLeave(); });
     await page.evaluate(() => {
-      rail.settings.dragToScrub = true; rail.render(Array.from({length:200}, (_, i) => i % 6 + 1));
+      rail.plugin.settings.dragToScrub = true; rail.updateSettings(); rail.render(Array.from({length:200}, (_, i) => i % 6 + 1));
       rail.el.scrollTop = 0; rail.centers = []; touchActivations.length = 0;
     });
     const densePoint = await touchPoint();
@@ -485,7 +514,7 @@ const root = path.resolve(__dirname, '../..');
       await page.evaluate(()=>{
         window.hapticEvents=[];
         window.hapticHeadings=[];
-        documentRail.plugin.settings.labelMoveMotion='slide';
+        documentRail.plugin.settings.labelMoveMotion='slide';documentRail.updateSettings();
         window.testDragNow=0;documentRail.dragNow=()=>testDragNow;
         documentRail.plugin.beginDragHaptics=()=>hapticEvents.push('begin');
         documentRail.plugin.tickDragHaptics=()=>{hapticEvents.push('tick');hapticHeadings.push(documentRail.dragSectionIndex());};
@@ -574,7 +603,7 @@ const root = path.resolve(__dirname, '../..');
       }
       await page.evaluate(()=>{
         documentRail.plugin.settings.placeCursorOnNavigate=true;
-        documentRail.plugin.settings.highlightOnNavigate=true;
+        documentRail.plugin.settings.highlightOnNavigate=true;documentRail.updateSettings();
         navigationView.editor={setCursor(){throw Error('Reading mode must not move the hidden editor cursor');}};
         const cm=navigationView.currentMode.cm;
         if(cm) {
@@ -597,7 +626,7 @@ const root = path.resolve(__dirname, '../..');
       await page.evaluate(()=>documentRail.activate(1));
       await page.evaluate(()=>{
         documentRail.plugin.settings.placeCursorOnNavigate=false;
-        documentRail.plugin.settings.highlightOnNavigate=false;
+        documentRail.plugin.settings.highlightOnNavigate=false;documentRail.updateSettings();
         const body=noteScroller.firstElementChild;body.replaceChildren();body.style.height='20000px';
         const headings=Array.from({length:200},(_,index)=>({heading:`Long ${index}`,level:index%4?2:1,position:{start:{line:index*5}}}));
         const elements=headings.map((heading,index)=>{
@@ -608,7 +637,7 @@ const root = path.resolve(__dirname, '../..');
         else mode.renderer.sections=headings.map((heading,index)=>({lineStart:heading.position.start.line,lineEnd:heading.position.start.line,el:{querySelectorAll:()=>[elements[index]]}}));
         documentRail.headings=headings;documentRail.lines=Array(1000).fill('');
         documentRail.plugin.settings.hierarchyMode='nearby';documentRail.plugin.settings.idleLevels=1;
-        documentRail.render(headings.map(heading=>heading.level));documentRail.syncActive();
+        documentRail.updateSettings();documentRail.render(headings.map(heading=>heading.level));documentRail.syncActive();
       });
       const denseRail=await page.locator('[role="listbox"]').boundingBox();
       await page.mouse.move(denseRail.x+denseRail.width/2,denseRail.y+15);

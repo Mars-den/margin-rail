@@ -6,7 +6,7 @@ const playwright = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '../..');
 (async () => {
   for (const engine of ['chromium', 'webkit']) {
-    const browser = await playwright[engine].launch({headless:true});
+    const browser = await playwright[engine].launch({headless:true,executablePath:process.env[engine==='chromium'?'PLAYWRIGHT_EXECUTABLE_PATH':'PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH']});
     try {
       const page = await browser.newPage({viewport:{width:1024,height:768},hasTouch:true,isMobile:true});
       await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1"><style>#host{position:relative;width:800px;height:600px}</style><button id="before">Before</button><div id="host"></div>');
@@ -44,7 +44,7 @@ const root = path.resolve(__dirname, '../..');
       });
       // No sleeps between taps: each heading jump can change the visible hierarchy.
       for (const scrub of [true,false]) {
-        await page.evaluate(scrub => {rail.settings.dragToScrub=scrub;rail.updateSettings();},scrub);
+        await page.evaluate(scrub => {rail.plugin.settings.dragToScrub=scrub;rail.updateSettings();},scrub);
         for (let tap=0;tap<24;tap++) {
           const point=await page.evaluate(tap => {
             rail.measure();const visible=rail.centers.flatMap((y,i)=>y==null?[]:[{y,i}]);
@@ -70,7 +70,7 @@ const root = path.resolve(__dirname, '../..');
       assert.equal(await page.evaluate(()=>activations.at(-1)),await page.evaluate(()=>rail.keyboardIndex));
       // A layout/active update during a press cannot move its original hit target.
       await page.evaluate(() => {
-        rail.dismissKeyboard();rail.settings.dragToScrub=false;rail.updateSettings();rail.measure();
+        rail.dismissKeyboard();rail.plugin.settings.dragToScrub=false;rail.updateSettings();rail.measure();
         const y=rail.centers.find(center=>center!=null);
         rail.startDrag({pointerType:'touch',pointerId:99,button:0,clientX:100,clientY:y,preventDefault(){}});
         const selected=rail.touch.index,before=rail.el.getBoundingClientRect().top;

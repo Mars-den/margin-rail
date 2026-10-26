@@ -1,0 +1,19 @@
+{
+  "name": "margin-rail",
+  "version": "1.2.4",
+  "private": true,
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node scripts/verify.cjs",
+    "test:settings": "node tests/browser/settings.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.7",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0"
+  }
+}
