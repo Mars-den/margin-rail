@@ -1,7 +1,7 @@
 # Customization
 
-Use the Workbench first: choose a page, then a group. Changes affect the native
-preview and open notes immediately. Rail states can be edited independently.
+Open Settings → Margin Rail to choose a preset and adjust its appearance and
+behaviour. Changes appear in the preview and open notes immediately.
 
 ## CSS snippets
 
