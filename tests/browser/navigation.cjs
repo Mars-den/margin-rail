@@ -262,7 +262,12 @@ const root = path.resolve(__dirname, '../..');
       Object.assign(rail.plugin.settings,{hoverStyle:'focus',animDuration:0});rail.updateSettings();
       rail.paintActive(new Set([0]),0);rail.setHovered(1);
     });
-    await page.waitForTimeout(150);
+    await page.waitForFunction(()=>{
+      const marks=rail.el.querySelectorAll('.scrollspy-mark');
+      return Number(getComputedStyle(marks[0]).opacity)===1
+        && Number(getComputedStyle(marks[1]).opacity)===1
+        && Number(getComputedStyle(marks[2]).opacity)<.15;
+    });
     const focused=await page.evaluate(()=>[...rail.el.querySelectorAll('.scrollspy-mark')].map(mark=>{
       const css=getComputedStyle(mark);return {opacity:Number(css.opacity),outline:css.outlineStyle};
     }));
