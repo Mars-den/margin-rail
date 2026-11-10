@@ -185,8 +185,9 @@ const root = path.resolve(__dirname, '../..');
     }
     // Color-mix rule and legacy fallback are separate declarations.
     await page.evaluate(() => { rail.plugin.settings.showSectionProgress = true; rail.updateSettings(); rail.activeIndex = 0; rail.paintProgress(.5); });
-    await page.waitForTimeout(160);
-    assert.match(await page.evaluate(() => getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor), /color\(srgb/);
+    await page.waitForFunction(() => /^color\(srgb/.test(
+      getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor,
+    ));
     await page.evaluate(() => {
       for (const sheet of document.styleSheets) {
         for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
@@ -194,8 +195,9 @@ const root = path.resolve(__dirname, '../..');
         }
       }
     });
-    await page.waitForTimeout(160);
-    assert.equal(await page.evaluate(() => getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor), 'rgb(50, 60, 70)');
+    await page.waitForFunction(() =>
+      getComputedStyle(rail.el.firstElementChild.firstElementChild).backgroundColor === 'rgb(50, 60, 70)',
+    );
     await page.evaluate(() => { rail.plugin.settings.showBookmarkButton = true; rail.updateSettings(); });
     await page.locator('#before').focus(); await page.keyboard.press('Tab');
     await page.keyboard.press('ArrowDown');
