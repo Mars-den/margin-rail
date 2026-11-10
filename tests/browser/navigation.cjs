@@ -87,15 +87,18 @@ const root = path.resolve(__dirname, '../..');
       return {top:box.top-host.top-rail.host.clientTop, bottom:host.bottom-box.bottom-rail.host.clientTop};
     });
     assert.deepEqual(padded, {top:70, bottom:20}, 'Padding starts below the note toolbar');
-    for (const [position, expected] of [[0,[0,48]],[100,[48,48]],[10000,[48,0]]]) {
+    for (const [position, expected] of [[0,[false,true]],[100,[true,true]],[10000,[true,false]]]) {
       const fades = await page.evaluate(position => {
         rail.el.scrollTop = position;
         rail.el.dispatchEvent(new Event('scroll'));
-        const css = getComputedStyle(rail.el);
-        return {lengths:['start','end'].map(end=>parseFloat(css.getPropertyValue(`--ss-fade-${end}`))), mask:css.maskImage};
+        const box = rail.el.getBoundingClientRect();
+        const visible = [...rail.el.children].filter(tick => {
+          const rect = tick.getBoundingClientRect();
+          return rect.top >= box.top && rect.bottom <= box.bottom;
+        });
+        return [visible[0], visible.at(-1)].map(tick => Number(getComputedStyle(tick).opacity) < 1);
       }, position);
-      assert.deepEqual(fades.lengths, expected);
-      assert.match(fades.mask, /linear-gradient/);
+      assert.deepEqual(fades, expected);
     }
     await page.evaluate(() => { rail.el.scrollTop = 0; });
     for (const gap of [0, 3, 16]) {

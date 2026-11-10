@@ -874,12 +874,44 @@ var RailView = class {
     return hoverStyle === "pill" || hoverStyle === "dot" ? Math.max(10, (expandHeight - tickHeight) / 2) : 10;
   }
   updateScrollFade() {
-    if (!this.dense) return;
+    if (!this.dense) {
+      for (const tick of this.fadedTicks?.keys() ?? [])
+        tick.setCssProps({ "--ss-edge-opacity": "" });
+      this.fadedTicks?.clear();
+      return;
+    }
     const { scrollTop, scrollHeight, clientHeight } = this.el;
-    this.el.setCssProps({
-      "--ss-fade-start": `${Math.max(0, Math.min(48, scrollTop))}px`,
-      "--ss-fade-end": `${Math.max(0, Math.min(48, scrollHeight - clientHeight - scrollTop))}px`
-    });
+    const end = scrollTop + clientHeight;
+    const maxFade = Math.min(48, clientHeight * 0.18);
+    const topFade = Math.min(maxFade, Math.max(0, scrollTop));
+    const bottomFade = Math.min(maxFade, Math.max(0, scrollHeight - end));
+    const { tickHeight, tickGap } = this.settings;
+    const pitch = tickHeight + tickGap;
+    const firstCenter = this.railPadding + tickHeight / 2;
+    const first = Math.max(0, Math.floor((scrollTop - firstCenter) / pitch));
+    const last = Math.min(
+      this.visibleTicks.length - 1,
+      Math.ceil((end - firstCenter) / pitch)
+    );
+    const faded = /* @__PURE__ */ new Map();
+    for (let index = first; index <= last; index++) {
+      const center = firstCenter + index * pitch;
+      const alpha = Math.min(
+        1,
+        topFade ? (center - scrollTop) / topFade : 1,
+        bottomFade ? (end - center) / bottomFade : 1
+      );
+      if (alpha >= 1) continue;
+      const tick = this.visibleTicks[index];
+      const value = Math.max(0.12, alpha).toFixed(3);
+      faded.set(tick, value);
+      if (this.fadedTicks?.get(tick) !== value)
+        tick.setCssProps({ "--ss-edge-opacity": value });
+    }
+    for (const tick of this.fadedTicks?.keys() ?? []) {
+      if (!faded.has(tick)) tick.setCssProps({ "--ss-edge-opacity": "" });
+    }
+    this.fadedTicks = faded;
   }
   // Switching to scrolling keeps the same mark sizes and spacing.
   fitPane() {
@@ -904,9 +936,10 @@ var RailView = class {
     const offset = s.anchor === "top" ? Math.max(0, Math.min(s.axisOffset, travel)) : s.anchor === "bottom" ? Math.max(-travel, Math.min(s.axisOffset, 0)) : Math.max(-travel / 2, Math.min(s.axisOffset, travel / 2));
     const used = s.anchor === "middle" ? 2 * Math.abs(offset) : Math.abs(offset);
     const available = Math.max(0, span - used);
-    const count = Array.from(this.el.children).filter(
+    this.visibleTicks = Array.from(this.el.children).filter(
       (tick) => !tick.hidden
-    ).length;
+    );
+    const count = this.visibleTicks.length;
     const natural = 2 * padding + count * s.tickHeight + Math.max(0, count - 1) * s.tickGap;
     this.dense = natural > available;
     this.el.toggleClass("is-dense", this.dense);

@@ -13,9 +13,11 @@
   position: relative;
 }
 
-/* Share the note's CSS classes without introducing a positioning box. */
+/* Share the note's CSS classes across the rail and its label. */
 .margin-rail-scope {
-  display: contents;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------- rail ---- */
@@ -78,7 +80,6 @@
   overflow-x: hidden;
   overflow-anchor: none;
   overscroll-behavior: contain;
-  scrollbar-width: none;
   min-width: calc(
     2 * var(--ss-hitbox, 36px) +
       max(
@@ -94,16 +95,8 @@
 .scrollspy-rail.is-dense::-webkit-scrollbar {
   display: none;
 }
-.scrollspy-rail.is-dense:not(:focus-visible) {
-  --ss-fade-mask: linear-gradient(
-    to bottom,
-    transparent,
-    #000 min(18%, var(--ss-fade-start, 0px)),
-    #000 calc(100% - min(18%, var(--ss-fade-end, 0px))),
-    transparent
-  );
-  -webkit-mask-image: var(--ss-fade-mask);
-  mask-image: var(--ss-fade-mask);
+.scrollspy-rail.is-dense:not(:focus-visible) .scrollspy-tick {
+  opacity: var(--ss-edge-opacity, 1);
 }
 .scrollspy-rail.is-dense,
 .scrollspy-rail.is-dense.can-scrub {

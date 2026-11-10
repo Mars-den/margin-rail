@@ -16,6 +16,7 @@ function fixture(levels) {
   const attrs = {}, properties = {}, classes = {};
   rail.el = { children: levels.map((_, i) => ({ id: `h-${i}`, hidden: false, attrs: {},
     setAttribute(k,v) { this.attrs[k] = v; },
+    setCssProps() {},
     getBoundingClientRect() { return this.hidden ? { height: 0 } :
       { top: 16 + i * 24 - rail.el.scrollTop, bottom: 40 + i * 24 - rail.el.scrollTop, height: 24 }; } })),
     attrs, properties, classes, scrollTop: 0, scrollHeight: levels.length * 24 + 20, clientHeight: 192,
