@@ -12,13 +12,13 @@ function fixture(levels) {
   rail.levels = levels;
   rail.activeIndex = 0; rail.expandedBranch = -1;
   rail.keyboardIndex = -1; rail.keyboardFocused = false;
-  rail.host = { clientHeight: 240, getBoundingClientRect: () => ({top: 0, bottom: 240, height: 240}) };
+  rail.host = { clientHeight: 240, querySelector: () => null, getBoundingClientRect: () => ({top: 0, bottom: 240, height: 240}) };
   const attrs = {}, properties = {}, classes = {};
   rail.el = { children: levels.map((_, i) => ({ id: `h-${i}`, hidden: false, attrs: {},
     setAttribute(k,v) { this.attrs[k] = v; },
     getBoundingClientRect() { return this.hidden ? { height: 0 } :
       { top: 16 + i * 24 - rail.el.scrollTop, bottom: 40 + i * 24 - rail.el.scrollTop, height: 24 }; } })),
-    attrs, properties, classes, scrollTop: 0,
+    attrs, properties, classes, scrollTop: 0, scrollHeight: levels.length * 24 + 20, clientHeight: 192,
     setCssStyles(styles) { Object.assign(this.style,styles); },
     setCssProps(props) { for (const [key,value] of Object.entries(props)) this.style.setProperty(key,value); },
     setAttribute(k,v) { attrs[k] = v; }, removeAttribute(k) { delete attrs[k]; },
@@ -57,7 +57,7 @@ key(fixture([]), 'End'); // Empty notes do not create a phantom selection.
 
 const dense = fixture(Array(200).fill(1));
 dense.fitPane(); assert.equal(dense.dense, true);
-assert.equal(dense.el.properties['--ss-pane-height'], '208px');
+assert.equal(dense.el.properties['--ss-pane-height'], '192px');
 key(dense, 'End'); assert.equal(dense.keyboardIndex, 199);
 assert.ok(dense.el.scrollTop > 4000);
 dense.measure(); assert.equal(dense.centers[0], null);
@@ -67,7 +67,7 @@ for (const anchor of ['top', 'middle', 'bottom']) {
     Object.assign(dense.settings, { anchor, axisOffset });
     dense.fitPane();
     const available = parseFloat(dense.el.properties['--ss-pane-height']);
-    assert.ok(available >= 24 && available <= 208);
+    assert.ok(available >= 24 && available <= 192);
     const offset = parseFloat(dense.el.properties['--ss-axis-offset']);
     if (anchor === 'top') assert.ok(offset >= 0);
     if (anchor === 'bottom') assert.ok(offset <= 0);

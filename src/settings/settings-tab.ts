@@ -644,6 +644,8 @@ class ScrollspySettingTab extends PluginSettingTab {
           ["anchor", "Anchor"],
           ["edgeOffset", "Edge inset"],
           ["axisOffset", "Vertical offset"],
+          ["topPadding", "Top padding"],
+          ["bottomPadding", "Bottom padding"],
         ]);
         break;
       case "placement/visibility":
@@ -727,7 +729,7 @@ class ScrollspySettingTab extends PluginSettingTab {
     if (group === "css") {
       parent.createEl("p", {
         cls: "setting-item-description",
-        text: "Use an Obsidian CSS snippet. Supported pixel variables override the matching controls and apply to both preview and notes.",
+        text: "Set variables on body for all notes and the preview. For specific notes, add a cssclasses property and target it with a selector such as .margin-rail-scope.my-note.",
       });
       const code = parent.createEl("pre");
       code.createEl("code", {

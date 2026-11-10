@@ -13,6 +13,11 @@
   position: relative;
 }
 
+/* Share the note's CSS classes without introducing a positioning box. */
+.margin-rail-scope {
+  display: contents;
+}
+
 /* ---------------------------------------------------------------- rail ---- */
 
 .scrollspy-rail {
@@ -22,13 +27,11 @@
   display: flex;
   flex-direction: column;
 
-  /* Ticks carry 3px of invisible padding for a usable hit area, so the gap
-     setting has to give that back to stay literal. */
-  gap: max(0px, calc(var(--ss-tick-gap, 6px) - 6px));
+  gap: var(--ss-tick-gap, 6px);
 
   /* Short outlines allow marks to expand freely. Dense outlines scroll with
      room reserved for the widest mark; labels remain outside this container. */
-  max-height: var(--ss-pane-height, calc(100% - 32px));
+  max-height: var(--ss-pane-height, calc(100% - 48px));
   box-sizing: border-box;
   overflow: visible;
 
@@ -36,7 +39,7 @@
      you can actually hit, and the matching negative inset keeps the bars
      exactly where the position settings put them. */
   padding-inline: var(--ss-hitbox, 36px);
-  padding-block: 10px;
+  padding-block: var(--ss-rail-padding, 10px);
   pointer-events: auto;
   cursor: pointer;
   touch-action: manipulation;
@@ -58,22 +61,24 @@
 }
 
 .scrollspy-rail.anchor-top {
-  top: calc(16px + var(--ss-axis-offset, 0px));
+  top: calc(var(--ss-top-inset, 24px) + var(--ss-axis-offset, 0px));
 }
 
 .scrollspy-rail.anchor-middle {
-  top: 50%;
+  top: calc(50% + (var(--ss-top-inset, 24px) - var(--ss-bottom-inset, 24px)) / 2);
   transform: translateY(-50%) translateY(var(--ss-axis-offset, 0px));
 }
 
 .scrollspy-rail.anchor-bottom {
-  bottom: calc(16px - var(--ss-axis-offset, 0px));
+  bottom: calc(var(--ss-bottom-inset, 24px) - var(--ss-axis-offset, 0px));
 }
 
 .scrollspy-rail.is-dense {
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   overscroll-behavior: contain;
+  scrollbar-width: none;
   min-width: calc(
     2 * var(--ss-hitbox, 36px) +
       max(
@@ -89,14 +94,20 @@
 .scrollspy-rail.is-dense::-webkit-scrollbar {
   display: none;
 }
+.scrollspy-rail.is-dense:not(:focus-visible) {
+  --ss-fade-mask: linear-gradient(
+    to bottom,
+    transparent,
+    #000 min(18%, var(--ss-fade-start, 0px)),
+    #000 calc(100% - min(18%, var(--ss-fade-end, 0px))),
+    transparent
+  );
+  -webkit-mask-image: var(--ss-fade-mask);
+  mask-image: var(--ss-fade-mask);
+}
 .scrollspy-rail.is-dense,
 .scrollspy-rail.is-dense.can-scrub {
   touch-action: pan-y;
-}
-.scrollspy-rail.is-dense .scrollspy-tick {
-  min-height: 24px;
-  box-sizing: border-box;
-  align-items: center;
 }
 .scrollspy-rail:focus-visible {
   outline: 2px solid var(--interactive-accent);
@@ -114,9 +125,8 @@
   pointer-events: none;
   display: flex;
   flex-shrink: 0;
-  padding-block: 3px;
   box-sizing: border-box;
-  height: calc(var(--ss-tick-height, 5px) + 6px);
+  height: var(--ss-tick-height, 5px);
   align-items: center;
 }
 

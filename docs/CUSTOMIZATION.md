@@ -22,6 +22,7 @@ Supported variables all start with `--margin-rail-`:
 | --- | --- |
 | `mark-width`, `mark-height`, `mark-radius`, `mark-gap` | px |
 | `level-indent`, `edge-offset`, `vertical-offset` | px |
+| `top-padding`, `bottom-padding` | px |
 | `current-length`, `passed-length` | additional px |
 | `idle-opacity`, `current-opacity`, `passed-opacity`, `hover-opacity` | 0–1 |
 | `label-width`, `label-size`, `label-padding`, `label-radius`, `label-distance` | px |
@@ -29,9 +30,34 @@ Supported variables all start with `--margin-rail-`:
 
 Dimensions use the same bounds as their settings controls. Invalid values are
 ignored. Geometry overrides also update pointer areas and layout. A control
-shows CSS when a snippet supplies its effective value. Disable the snippet to
-return to the saved setting. Use `body` to apply variables throughout the vault;
-preview-only or per-element dimensional overrides are not supported.
+shows CSS when a snippet overrides its value in the preview. Disable the
+snippet to return to the saved setting.
+
+Top and bottom padding reserve space around the rail. The top padding starts
+below the note toolbar.
+
+To style specific notes, add a class to their `cssclasses` property in
+[Obsidian](https://obsidian.md/help/snippets).
+
+```yaml
+---
+cssclasses:
+  - wide-rail
+---
+```
+
+```css
+.margin-rail-scope.wide-rail {
+  --margin-rail-mark-width: 28px;
+  --margin-rail-mark-gap: 10px;
+  --margin-rail-label-width: 340px;
+}
+```
+
+The class applies to the rail and label in both reading and editing mode.
+You can also target `.scrollspy-rail` for rail variables and
+`.scrollspy-flyout` for label variables. To scope a rule to the settings
+preview, prefix its selector with `.scrollspy-workbench`.
 
 ## Preset files
 

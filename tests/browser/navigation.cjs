@@ -68,11 +68,49 @@ const root = path.resolve(__dirname, '../..');
       for (const offset of [-180, 0, 180]) {
         await page.evaluate(({anchor, offset}) => { rail.plugin.settings.anchor = anchor; rail.plugin.settings.axisOffset = offset; rail.updateSettings(); }, {anchor, offset});
         const box = await layout();
-        assert.ok(box.dense && box.scrollHeight > box.height && box.target >= 24);
+        assert.ok(box.dense && box.scrollHeight > box.height);
+        assert.equal(box.target, 3);
         assert.ok(box.top >= box.hostTop && box.bottom <= box.hostBottom, JSON.stringify({anchor, offset, ...box}));
       }
     }
     await page.evaluate(() => { rail.plugin.settings.anchor = 'middle'; rail.plugin.settings.axisOffset = 0; rail.updateSettings(); });
+    const padded = await page.evaluate(() => {
+      const header = rail.host.createDiv({cls:'view-header'});
+      header.style.height = '40px';
+      Object.assign(rail.plugin.settings, {topPadding:30, bottomPadding:20});
+      rail.updateSettings();
+      const host = rail.host.getBoundingClientRect();
+      const box = rail.el.getBoundingClientRect();
+      header.remove();
+      Object.assign(rail.plugin.settings, {topPadding:testAPI.DEFAULTS.topPadding, bottomPadding:testAPI.DEFAULTS.bottomPadding});
+      rail.updateSettings();
+      return {top:box.top-host.top-rail.host.clientTop, bottom:host.bottom-box.bottom-rail.host.clientTop};
+    });
+    assert.deepEqual(padded, {top:70, bottom:20}, 'Padding starts below the note toolbar');
+    for (const [position, expected] of [[0,[0,48]],[100,[48,48]],[10000,[48,0]]]) {
+      const fades = await page.evaluate(position => {
+        rail.el.scrollTop = position;
+        rail.el.dispatchEvent(new Event('scroll'));
+        const css = getComputedStyle(rail.el);
+        return {lengths:['start','end'].map(end=>parseFloat(css.getPropertyValue(`--ss-fade-${end}`))), mask:css.maskImage};
+      }, position);
+      assert.deepEqual(fades.lengths, expected);
+      assert.match(fades.mask, /linear-gradient/);
+    }
+    await page.evaluate(() => { rail.el.scrollTop = 0; });
+    for (const gap of [0, 3, 16]) {
+      const spacing = await page.evaluate(gap => {
+        rail.plugin.settings.tickGap = gap;
+        rail.updateSettings();
+        return [4, 200].map(count => {
+          rail.render(Array.from({length:count}, (_, i) => i % 6 + 1));
+          const [first, second] = [...rail.el.children].slice(0, 2).map(tick => tick.firstElementChild.getBoundingClientRect());
+          return { dense: rail.dense, gap: second.top - first.bottom };
+        });
+      }, gap);
+      assert.deepEqual(spacing, [{dense:false,gap},{dense:true,gap}]);
+    }
+    await page.evaluate(() => { rail.plugin.settings.tickGap = testAPI.DEFAULTS.tickGap; rail.updateSettings(); });
     await page.locator('#before').focus();
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement === rail.el), true);
@@ -451,7 +489,7 @@ const root = path.resolve(__dirname, '../..');
         const headingEls=headings.map(item=>{const el=body.createEl('h2',{text:item.heading});Object.assign(el.style,{position:'absolute',top:`${item.position.start.line*18}px`,height:'28px',margin:'0'});return el;});
         window.headingEls=headingEls;
         const view=new NativeMarkdownView();view.containerEl=host;view.file={path:'Synthetic.md'};
-        view.app={metadataCache:{getFileCache:()=>({headings})}};view.getViewData=()=>Array(100).fill('synthetic').join('\n');
+        view.cache={headings};view.app={metadataCache:{getFileCache:()=>view.cache}};view.getViewData=()=>Array(100).fill('synthetic').join('\n');
         const mode={type:reading?'preview':'source',getScroll:()=>scroller.scrollTop/18,
           applyScroll(line){this.nativeJumps=(this.nativeJumps||0)+1;scroller.scrollTop=line*18;}};
         if(reading){mode.renderer={previewEl:scroller,onRendered(fn){fn();},sections:headings.map((item,index)=>({lineStart:item.position.start.line,lineEnd:item.position.start.line+1,el:{querySelectorAll:()=>[headingEls[index]]}}))};view.previewMode=mode;}else mode.cm={scrollDOM:scroller,contentDOM:{offsetTop:0},state:{doc:{lines:100,line(number){return{from:number-1};}}},lineBlockAt(position){return{top:position*18,height:28};}};
@@ -462,6 +500,44 @@ const root = path.resolve(__dirname, '../..');
         window.documentRail=new testAPI.DocumentRail(plugin,view);plugin.rails.set(view,documentRail);documentRail.rebuild();
         plugin.installHeadingNavigation();window.navigationView=view;window.noteScroller=scroller;
       },reading);
+      const scopedSnippet = await page.addStyleTag({content:`
+        body { --margin-rail-mark-width: 20px; --margin-rail-label-width: 340px; }
+        .margin-rail-scope.wide-rail { --margin-rail-mark-width: 28px; --margin-rail-current-color: red; }
+        .wide-rail .scrollspy-rail { --margin-rail-label-width: 300px; }
+        .wide-rail .scrollspy-flyout { --margin-rail-label-width: 340px; }
+      `});
+      const scopes = await page.evaluate(() => {
+        const read = () => ({
+          width: documentRail.settings.tickWidth,
+          label: getComputedStyle(documentRail.flyout).maxWidth,
+          color: documentRail.el.style.getPropertyValue('--ss-active-color'),
+        });
+        documentRail.updateSettings();
+        const base = read();
+        navigationView.cache.frontmatter = {cssclasses: ['wide-rail']};
+        documentRail.refresh(false, true); // Late metadata with unchanged headings
+        const scoped = read();
+        const siblingHost = document.body.createDiv();
+        const sibling = new testAPI.RailView(documentRail.plugin, siblingHost);
+        const siblingWidth = sibling.settings.tickWidth;
+        sibling.destroy();
+        siblingHost.remove();
+        const originalFile = navigationView.file;
+        navigationView.file = {path: 'Other.md'};
+        delete navigationView.cache.frontmatter;
+        documentRail.refresh();
+        const switched = read();
+        navigationView.file = originalFile;
+        documentRail.refresh();
+        return {base, scoped, switched, siblingWidth};
+      });
+      assert.equal(scopes.base.width, 20);
+      assert.equal(scopes.base.label, '340px');
+      assert.deepEqual(scopes.scoped, {width:28,label:'340px',color:'red'});
+      assert.deepEqual(scopes.switched, scopes.base);
+      assert.equal(scopes.siblingWidth, scopes.base.width);
+      await scopedSnippet.evaluate(el => el.remove());
+      await page.evaluate(() => documentRail.updateSettings());
       for(const mode of ['length','equal']) {
         await page.evaluate(mode=>{documentRail.plugin.settings.trackingMode=mode;documentRail.updateSettings();},mode);
         for(let index=0;index<4;index++) {

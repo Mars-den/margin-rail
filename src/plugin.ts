@@ -205,13 +205,23 @@ export default class ScrollspyRailPlugin extends Plugin {
     // Resolve numeric pixels here so JS layout and painted geometry agree.
     const win = rail?.host.ownerDocument.defaultView;
     if (rail && typeof win?.getComputedStyle === "function") {
+      // Reading computed styles can start transitions on changed classes.
+      rail.flyout.setCssProps({
+        "--ss-label-duration": `${s.labelDuration ?? 120}ms`,
+      });
       const css = win.getComputedStyle(rail.el);
+      const labelCss = win.getComputedStyle(rail.flyout);
       for (const key of Object.keys(
         PUBLIC_CSS,
       ) as (keyof typeof PUBLIC_CSS)[]) {
         const token = PUBLIC_CSS[key];
-        const text = css.getPropertyValue(`--margin-rail-${token}`).trim(),
-          rule = NUMBER_RULES[key];
+        const name = `--margin-rail-${token}`;
+        // Read the label's cascade first, with a fallback for rail-only rules.
+        const labelValue = token.startsWith("label-")
+          ? labelCss.getPropertyValue(name).trim()
+          : "";
+        const text = labelValue || css.getPropertyValue(name).trim();
+        const rule = NUMBER_RULES[key];
         const pixel = rule[3] === "px";
         if (!(pixel ? /^-?\d*\.?\d+px$/ : /^\d*\.?\d+$/).test(text)) continue;
         const value = Number.parseFloat(text);

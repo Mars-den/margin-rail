@@ -58,6 +58,7 @@ class RailView {
   declare keyboardIndex: number;
   declare railId: string;
   declare ownsHostClass: boolean;
+  declare scope: HTMLDivElement;
   declare el: HTMLDivElement & { children: HTMLCollectionOf<HTMLDivElement> };
   declare accessibleLabel: HTMLSpanElement;
   declare onKeyboardIntent: (event: KeyboardEvent) => void;
@@ -72,6 +73,8 @@ class RailView {
   declare inputMode: string;
   declare bookmarkIconKey: string;
   declare dense: boolean;
+  declare topInset: number;
+  declare bottomInset: number;
   declare touch: {
     id: number;
     x: number;
@@ -109,14 +112,15 @@ class RailView {
 
     this.ownsHostClass = !hostEl.classList.contains("margin-rail-host");
     hostEl.classList.add("margin-rail-host");
-    this.el = hostEl.createDiv({ cls: "scrollspy-rail" }) as typeof this.el;
+    this.scope = hostEl.createDiv({ cls: "margin-rail-scope" });
+    this.el = this.scope.createDiv({ cls: "scrollspy-rail" }) as typeof this.el;
     // Obsidian's mobile gesture recognizer honours this on ancestors.
     this.el.dataset.ignoreSwipe = "true";
     this.el.tabIndex = 0;
     this.el.setAttribute("role", "listbox");
     // Obsidian turns aria-label into a pointer tooltip. A referenced name keeps
     // the listbox accessible without competing with our heading flyout.
-    this.accessibleLabel = hostEl.createSpan({ text: "Note headings" });
+    this.accessibleLabel = this.scope.createSpan({ text: "Note headings" });
     this.accessibleLabel.id = `${this.railId}-label`;
     this.accessibleLabel.hidden = true;
     this.el.setAttribute("aria-labelledby", this.accessibleLabel.id);
@@ -163,6 +167,7 @@ class RailView {
     );
     this.el.addEventListener("scroll", () => {
       this.centers = [];
+      this.updateScrollFade();
       if (this.touch) this.touch.moved = true;
       if (this.drag?.moved) {
         this.updateDragFeedback(this.dragSectionIndex());
@@ -178,7 +183,7 @@ class RailView {
 
     // The label lives outside the rail so the rail never needs a background of
     // its own -- the hover chrome belongs to the label, not to the bars.
-    this.flyout = hostEl.createDiv({ cls: "scrollspy-flyout" });
+    this.flyout = this.scope.createDiv({ cls: "scrollspy-flyout" });
     this.flyout.dataset.ignoreSwipe = "true";
     this.flyoutHead = this.flyout.createDiv({ cls: "scrollspy-flyout-head" });
     this.flyoutTitle = this.flyoutHead.createSpan({
@@ -277,6 +282,7 @@ class RailView {
     this.el.addEventListener("lostpointercapture", (evt) => {
       if (this.drag || this.touch) this.endDrag(evt, true);
     });
+    this.updatePresentation();
     this.plugin.applyStyles(this);
   }
 
@@ -293,9 +299,7 @@ class RailView {
     if (this.waveFrame) this.win.cancelAnimationFrame(this.waveFrame);
     if (this.drag && this.el.hasPointerCapture(this.drag.id))
       this.el.releasePointerCapture(this.drag.id);
-    this.el.remove();
-    this.accessibleLabel.remove();
-    this.flyout.remove();
+    this.scope.remove();
   }
 
   get settings(): Settings {
@@ -459,14 +463,43 @@ class RailView {
     this.updateHierarchy();
   }
 
-  // A bounded scroll strip preserves target sizes instead of compressing hundreds
-  // of headings into a few pixels. Reserve horizontal room for expanded marks.
+  get railPadding() {
+    const { hoverStyle, expandHeight, tickHeight } = this.settings;
+    return hoverStyle === "pill" || hoverStyle === "dot"
+      ? Math.max(10, (expandHeight - tickHeight) / 2)
+      : 10;
+  }
+
+  updateScrollFade() {
+    if (!this.dense) return;
+    const { scrollTop, scrollHeight, clientHeight } = this.el;
+    this.el.setCssProps({
+      "--ss-fade-start": `${Math.max(0, Math.min(48, scrollTop))}px`,
+      "--ss-fade-end": `${Math.max(0, Math.min(48, scrollHeight - clientHeight - scrollTop))}px`,
+    });
+  }
+
+  // Switching to scrolling keeps the same mark sizes and spacing.
   fitPane() {
     if (!this.host) return;
     const s = this.settings;
     const height =
       this.host.clientHeight || this.host.getBoundingClientRect().height;
-    const travel = Math.max(0, height - 56);
+    const padding = this.railPadding;
+    const header = this.host.querySelector<HTMLElement>(
+      ":scope > .view-header",
+    );
+    const clearance = Math.max(
+      0,
+      height - Math.max(24, 2 * padding + s.tickHeight),
+    );
+    this.topInset = Math.min(
+      (header?.offsetHeight ?? 0) + s.topPadding,
+      clearance,
+    );
+    this.bottomInset = Math.min(s.bottomPadding, clearance - this.topInset);
+    const span = height - this.topInset - this.bottomInset;
+    const travel = Math.max(0, span - Math.max(24, 2 * padding + s.tickHeight));
     const offset =
       s.anchor === "top"
         ? Math.max(0, Math.min(s.axisOffset, travel))
@@ -475,26 +508,26 @@ class RailView {
           : Math.max(-travel / 2, Math.min(s.axisOffset, travel / 2));
     const used =
       s.anchor === "middle" ? 2 * Math.abs(offset) : Math.abs(offset);
-    const available = Math.max(0, height - 32 - used);
+    const available = Math.max(0, span - used);
     const count = Array.from(this.el.children).filter(
       (tick) => !tick.hidden,
     ).length;
-    const swell = ["pill", "dot"].includes(s.hoverStyle)
-      ? Math.max(0, s.expandHeight - s.tickHeight)
-      : 0;
     const natural =
-      20 +
-      swell +
-      count * (s.tickHeight + 6) +
-      Math.max(0, count - 1) * Math.max(0, s.tickGap - 6);
+      2 * padding + count * s.tickHeight + Math.max(0, count - 1) * s.tickGap;
     this.dense = natural > available;
     this.el.toggleClass("is-dense", this.dense);
-    this.el.setCssProps({ "--ss-pane-height": `${available}px` });
-    this.el.setCssProps({ "--ss-axis-offset": `${offset}px` });
+    this.el.setCssProps({
+      "--ss-pane-height": `${available}px`,
+      "--ss-axis-offset": `${offset}px`,
+      "--ss-rail-padding": `${padding}px`,
+      "--ss-top-inset": `${this.topInset}px`,
+      "--ss-bottom-inset": `${this.bottomInset}px`,
+    });
     if (this.dense) {
       this.el.setCssStyles({ translate: "" });
       this.el.setCssProps({ "--ss-reveal-shift": "" });
     }
+    this.updateScrollFade();
     this.centers = [];
   }
 
@@ -510,9 +543,10 @@ class RailView {
     // Scroll only the outline, never its note or workspace ancestors.
     const box = tick.getBoundingClientRect(),
       rail = this.el.getBoundingClientRect();
-    if (box.top < rail.top + 10) this.el.scrollTop -= rail.top + 10 - box.top;
-    else if (box.bottom > rail.bottom - 10)
-      this.el.scrollTop += box.bottom - rail.bottom + 10;
+    const top = rail.top + this.railPadding;
+    const bottom = rail.bottom - this.railPadding;
+    if (box.top < top) this.el.scrollTop -= top - box.top;
+    else if (box.bottom > bottom) this.el.scrollTop += box.bottom - bottom;
     this.centers = [];
     this.setHovered(this.keyboardIndex);
     this.showFlyout(this.keyboardIndex);
@@ -737,8 +771,11 @@ class RailView {
           const host = this.host.getBoundingClientRect(),
             box = this.el.getBoundingClientRect();
           shift = Math.max(
-            existing + host.top + 16 - box.top,
-            Math.min(shift, existing + host.bottom - 16 - box.bottom),
+            existing + host.top + this.topInset - box.top,
+            Math.min(
+              shift,
+              existing + host.bottom - this.bottomInset - box.bottom,
+            ),
           );
         }
         this.el.setCssProps({ "--ss-reveal-shift": String(shift) });
@@ -944,8 +981,8 @@ class RailView {
         const host = this.host.getBoundingClientRect(),
           rail = this.el.getBoundingClientRect();
         shift = Math.max(
-          host.top + 16 - rail.top,
-          Math.min(shift, host.bottom - 16 - rail.bottom),
+          host.top + this.topInset - rail.top,
+          Math.min(shift, host.bottom - this.bottomInset - rail.bottom),
         );
       }
       this.el.setCssProps({ "--ss-reveal-shift": String(shift) });
@@ -1101,8 +1138,7 @@ class RailView {
 
   /* --------------------------------------------------------------- build -- */
 
-  updatePresentation() {
-    const settings = this.settings;
+  updatePresentation(settings = this.settings) {
     this.el.toggleClass("is-left", settings.side === "left");
     this.el.toggleClass("is-right", settings.side !== "left");
     this.el.toggleClass("anchor-top", settings.anchor === "top");
@@ -1124,6 +1160,7 @@ class RailView {
   }
 
   updateSettings() {
+    this.updatePresentation(this.plugin.settings);
     this.plugin.applyStyles(this);
     // Only pill markup changes require replacing ticks; sliders reuse them.
     if (
@@ -1132,7 +1169,6 @@ class RailView {
     ) {
       this.render(this.levels);
     } else {
-      this.updatePresentation();
       this.centers = [];
       this.onLeave();
     }

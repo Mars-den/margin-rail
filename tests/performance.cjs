@@ -153,7 +153,7 @@ function viewFixture(doc, name) {
   assert.equal(plugin.rails.size, 0);
   assert.equal(main.listeners.size, 0); assert.equal(popout.listeners.size, 0);
   for (const rail of [a,b]) {
-    assert.equal(rail.el.removed, true); assert.equal(rail.flyout.removed, true);
+    assert.equal(rail.scope.removed, true);
     assert.equal(rail.host.classList.contains('margin-rail-host'), false);
     assert.equal(rail.resizeObserver.disconnected, true);
   }

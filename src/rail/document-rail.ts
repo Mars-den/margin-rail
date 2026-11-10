@@ -1,5 +1,10 @@
 import { Platform } from "obsidian";
-import type { HeadingCache, MarkdownView, TFile } from "obsidian";
+import type {
+  CachedMetadata,
+  HeadingCache,
+  MarkdownView,
+  TFile,
+} from "obsidian";
 import type ScrollspyRailPlugin from "../plugin";
 import type { RailMarkdownMode, RailMarkdownView } from "./internal-types";
 import type { BookmarksCore } from "../integrations/bookmarks";
@@ -587,9 +592,9 @@ class DocumentRail extends RailView {
   }
 
   syncWidth() {
-    this.fitPane();
     const hidden = !!this.visibilityReason();
     this.el.toggleClass("is-cramped", hidden);
+    this.fitPane();
     if (hidden) this.onLeave();
     this.centers = [];
   }
@@ -605,13 +610,24 @@ class DocumentRail extends RailView {
     }
   }
 
-  metadataKey() {
-    return JSON.stringify(
-      this.view.file
-        ? this.view.app.metadataCache.getFileCache(this.view.file)?.headings ||
-            []
-        : [],
-    );
+  metadataKey(
+    cache = this.view.file
+      ? this.view.app.metadataCache.getFileCache(this.view.file)
+      : null,
+  ) {
+    return JSON.stringify([cache?.headings || [], this.noteClasses(cache)]);
+  }
+
+  noteClasses(cache: CachedMetadata | null) {
+    const raw: unknown =
+      cache?.frontmatter?.cssclasses ?? cache?.frontmatter?.cssclass;
+    return (Array.isArray(raw) ? raw : [raw])
+      .flatMap((value: unknown) =>
+        typeof value === "string"
+          ? value.split(/[\t\n\f\r ,]+/).filter(Boolean)
+          : [],
+      )
+      .join(" ");
   }
 
   refresh(force = false, checkMetadata = false) {
@@ -645,12 +661,14 @@ class DocumentRail extends RailView {
 
   rebuild() {
     this.syncBookmarks();
-    const settings = this.settings;
     const file = this.view.file;
     this.file = file;
     this.filePath = file?.path;
-    this.cachedMetadataKey = this.metadataKey();
     const cache = file ? this.view.app.metadataCache.getFileCache(file) : null;
+    this.cachedMetadataKey = this.metadataKey(cache);
+    this.scope.className =
+      `margin-rail-scope ${this.noteClasses(cache)}`.trimEnd();
+    this.plugin.applyStyles(this);
     this.headings = (cache && cache.headings) || [];
 
     // Cached here rather than read on hover: rebuild already runs on every
@@ -661,7 +679,7 @@ class DocumentRail extends RailView {
     this.render(this.headings.map((heading) => heading.level));
     this.el.toggleClass(
       "is-hidden",
-      this.headings.length < settings.minHeadings,
+      this.headings.length < this.settings.minHeadings,
     );
 
     this.activeIndex = -1;

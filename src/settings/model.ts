@@ -4,6 +4,8 @@ export const DEFAULTS = {
   anchor: "middle",
   edgeOffset: 12,
   axisOffset: 0,
+  topPadding: 24,
+  bottomPadding: 24,
 
   // Bars
   tickWidth: 16,
@@ -122,6 +124,8 @@ export const NUMBER_RULES: Record<string, NumberRule> = {
   levelIndent: [0, 12, 1, "px"],
   edgeOffset: [0, 80, 1, "px"],
   axisOffset: [-300, 300, 1, "px"],
+  topPadding: [0, 120, 1, "px"],
+  bottomPadding: [0, 120, 1, "px"],
   activeBoost: [0, 40, 1, "px"],
   passedBoost: [0, 40, 1, "px"],
   pointedBoost: [0, 40, 1, "px"],
@@ -229,6 +233,8 @@ export const PUBLIC_CSS = {
   levelIndent: "level-indent",
   edgeOffset: "edge-offset",
   axisOffset: "vertical-offset",
+  topPadding: "top-padding",
+  bottomPadding: "bottom-padding",
   activeBoost: "current-length",
   passedBoost: "passed-length",
   idleOpacity: "idle-opacity",
